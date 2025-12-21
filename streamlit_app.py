@@ -1,7 +1,7 @@
 """
-Decomposition Tree - Power BI Style with D3.js Collapsible Tree
-A drill-down analysis tool using st.components.v1.html for interactive D3 visualization
-Compatible with Streamlit in Snowflake (Custom UI feature GA August 2024)
+Decomposition Tree - Power BI Style
+Pure JavaScript/SVG implementation (no external dependencies)
+Fully compatible with Streamlit in Snowflake CSP restrictions
 """
 
 import streamlit as st
@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import json
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional
 
 # Page config
 st.set_page_config(
@@ -18,8 +18,9 @@ st.set_page_config(
     layout="wide"
 )
 
+
 # ============================================
-# MOCK DATA GENERATION
+# DATA GENERATION
 # ============================================
 
 @st.cache_data
@@ -58,7 +59,6 @@ def generate_mock_data() -> pd.DataFrame:
         direction = np.random.choice(directions, p=[0.52, 0.48])
         period = np.random.choice(periods, p=[0.15, 0.30, 0.30, 0.25])
 
-        # OTP (On-Time Performance) - percentage metric
         base_otp = np.random.uniform(55, 78)
         if division == 'Manhattan':
             base_otp += 5
@@ -83,49 +83,51 @@ def generate_mock_data() -> pd.DataFrame:
 
 
 # ============================================
-# BUILD HIERARCHICAL DATA
+# HIERARCHY BUILDING
 # ============================================
 
+def calculate_metric(df: pd.DataFrame, metric: str) -> float:
+    """Calculate metric value for a dataframe subset"""
+    if metric == "OTP":
+        if len(df) == 0 or df['Trips'].sum() == 0:
+            return 0.0
+        return round(float(np.average(df['OTP'], weights=df['Trips'])), 1)
+    else:
+        return int(df['Trips'].sum())
+
+
+def get_color(value: float, min_val: float, max_val: float) -> str:
+    """Get color based on value relative to min/max"""
+    if max_val == min_val:
+        normalized = 0.5
+    else:
+        normalized = (value - min_val) / (max_val - min_val)
+
+    if normalized >= 0.7:
+        return "#2E7D32"  # Green
+    elif normalized >= 0.5:
+        return "#8BC34A"  # Light green
+    elif normalized >= 0.3:
+        return "#FFC107"  # Yellow/Amber
+    else:
+        return "#FF9800"  # Orange
+
+
 def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dict:
-    """Build a nested hierarchical structure for D3 tree"""
+    """Build a nested hierarchical structure for the tree"""
 
-    def calc_metric(subset):
-        if metric == "OTP":
-            if len(subset) == 0 or subset['Trips'].sum() == 0:
-                return 0
-            return round(np.average(subset['OTP'], weights=subset['Trips']), 1)
-        else:
-            return int(subset['Trips'].sum())
-
-    def get_color(value, min_val, max_val):
-        if max_val == min_val:
-            normalized = 0.5
-        else:
-            normalized = (value - min_val) / (max_val - min_val)
-
-        if normalized >= 0.7:
-            return "#2E7D32"  # Green
-        elif normalized >= 0.5:
-            return "#8BC34A"  # Light green
-        elif normalized >= 0.3:
-            return "#FFC107"  # Yellow/Amber
-        else:
-            return "#FF9800"  # Orange
-
-    def build_level(data, dims_remaining, parent_path=""):
+    def build_level(data: pd.DataFrame, dims_remaining: List[str]) -> List[Dict]:
         if not dims_remaining or len(data) == 0:
             return []
 
         current_dim = dims_remaining[0]
         next_dims = dims_remaining[1:]
 
-        groups = data.groupby(current_dim)
+        groups = list(data.groupby(current_dim))
         children = []
 
-        values = []
-        for name, group in groups:
-            values.append(calc_metric(group))
-
+        # Calculate values for color scaling
+        values = [calculate_metric(group, metric) for _, group in groups]
         min_val = min(values) if values else 0
         max_val = max(values) if values else 1
 
@@ -140,7 +142,7 @@ def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dic
 
             # Recursively build children
             if next_dims:
-                node["_children"] = build_level(group, next_dims, f"{parent_path}/{name}")
+                node["children"] = build_level(group, next_dims)
 
             children.append(node)
 
@@ -149,426 +151,315 @@ def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dic
         return children
 
     # Root node
-    root_value = calc_metric(df)
+    root_value = calculate_metric(df, metric)
     root = {
         "name": "CJTP",
         "dimension": "Total",
         "value": root_value,
         "color": "#1976D2",
         "count": len(df),
-        "_children": build_level(df, dimensions)
+        "children": build_level(df, dimensions)
     }
 
     return root
 
 
-def create_d3_collapsible_tree(tree_data: Dict, metric: str) -> str:
-    """Create the D3.js collapsible tree visualization"""
+# ============================================
+# PURE JS/SVG VISUALIZATION (NO EXTERNAL DEPS)
+# ============================================
+
+def create_tree_visualization(tree_data: Dict, metric: str) -> str:
+    """Create pure JavaScript/SVG collapsible tree (Snowflake CSP compliant)"""
 
     tree_json = json.dumps(tree_data)
     format_type = "percent" if metric == "OTP" else "number"
 
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://d3js.org/d3.v7.min.js"></script>
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            body {{
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: #ffffff;
-                overflow: auto;
-            }}
-            .node {{
-                cursor: pointer;
-            }}
-            .node circle {{
-                stroke-width: 2px;
-            }}
-            .node text {{
-                font-size: 12px;
-                fill: #333;
-            }}
-            .node .value-text {{
-                font-size: 11px;
-                fill: #666;
-            }}
-            .node .bar-bg {{
-                fill: #e0e0e0;
-            }}
-            .link {{
-                fill: none;
-                stroke: #1976D2;
-                stroke-opacity: 0.4;
-                stroke-width: 1.5px;
-            }}
-            .tooltip {{
-                position: absolute;
-                background: rgba(0,0,0,0.8);
-                color: white;
-                padding: 8px 12px;
-                border-radius: 4px;
-                font-size: 12px;
-                pointer-events: none;
-                z-index: 1000;
-            }}
-        </style>
-    </head>
-    <body>
-        <div id="tree-container"></div>
-        <div id="tooltip" class="tooltip" style="display:none;"></div>
+    html = f'''
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: "Segoe UI", Arial, sans-serif; background: #fff; }}
+.tree-container {{ padding: 20px; overflow: auto; }}
+svg {{ overflow: visible; }}
+.node {{ cursor: pointer; }}
+.node-circle {{ stroke-width: 2px; transition: all 0.2s; }}
+.node-circle:hover {{ stroke-width: 3px; }}
+.node-text {{ font-size: 12px; fill: #333; pointer-events: none; }}
+.node-value {{ font-size: 11px; fill: #666; pointer-events: none; }}
+.node-bar-bg {{ fill: #e0e0e0; }}
+.node-bar {{ transition: width 0.3s; }}
+.link {{ fill: none; stroke: #1976D2; stroke-opacity: 0.4; stroke-width: 1.5px; }}
+.tooltip {{
+    position: fixed; background: rgba(0,0,0,0.85); color: #fff;
+    padding: 8px 12px; border-radius: 4px; font-size: 12px;
+    pointer-events: none; z-index: 1000; display: none;
+    max-width: 200px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}}
+</style>
+</head>
+<body>
+<div class="tree-container">
+    <svg id="tree-svg"></svg>
+</div>
+<div id="tooltip" class="tooltip"></div>
 
-        <script>
-            const treeData = {tree_json};
-            const formatType = "{format_type}";
+<script>
+(function() {{
+    "use strict";
 
-            function formatValue(val) {{
-                if (formatType === "percent") {{
-                    return val.toFixed(1) + "%";
-                }} else {{
-                    return val.toLocaleString();
-                }}
-            }}
+    const data = {tree_json};
+    const formatType = "{format_type}";
 
-            // Set dimensions
-            const margin = {{top: 20, right: 200, bottom: 20, left: 100}};
-            const width = 1200;
-            const barWidth = 60;
-            const barHeight = 8;
+    // Configuration
+    const config = {{
+        nodeWidth: 180,
+        nodeHeight: 50,
+        levelGap: 220,
+        siblingGap: 8,
+        barWidth: 60,
+        barHeight: 6,
+        duration: 300,
+        margin: {{ top: 40, right: 120, bottom: 40, left: 80 }}
+    }};
 
-            // Calculate dynamic height based on expanded nodes
-            let nodeCount = 0;
-            function countNodes(node) {{
-                nodeCount++;
-                if (node.children) {{
-                    node.children.forEach(countNodes);
-                }}
-            }}
+    // State
+    let nodeId = 0;
+    let root = null;
 
-            // Create SVG
-            const svg = d3.select("#tree-container")
-                .append("svg")
-                .attr("width", width)
-                .attr("height", 800)
-                .append("g")
-                .attr("transform", `translate(${{margin.left}},${{margin.top}})`);
+    // Utilities
+    function formatValue(val) {{
+        return formatType === "percent" ? val.toFixed(1) + "%" : val.toLocaleString();
+    }}
 
-            // Create tooltip
-            const tooltip = d3.select("#tooltip");
+    // Process tree data - add IDs and collapse state
+    function processNode(node, depth) {{
+        node.id = ++nodeId;
+        node.depth = depth;
+        node.expanded = depth < 1; // Expand only root initially
 
-            // Tree layout
-            const treeLayout = d3.tree().nodeSize([35, 200]);
-
-            // Create hierarchy
-            const root = d3.hierarchy(treeData);
-            root.x0 = 0;
-            root.y0 = 0;
-
-            // Initially expand first two levels
-            root.descendants().forEach((d, i) => {{
-                if (d.depth < 1) {{
-                    d._children = d.children || d.data._children?.map(c => d3.hierarchy(c));
-                    if (d.data._children && !d.children) {{
-                        d.children = d.data._children.map(c => {{
-                            const node = d3.hierarchy(c);
-                            node.parent = d;
-                            node.depth = d.depth + 1;
-                            return node;
-                        }});
-                    }}
-                }} else {{
-                    if (d.children) {{
-                        d._children = d.children;
-                        d.children = null;
-                    }} else if (d.data._children) {{
-                        d._children = d.data._children.map(c => {{
-                            const node = d3.hierarchy(c);
-                            node.parent = d;
-                            node.depth = d.depth + 1;
-                            return node;
-                        }});
-                    }}
-                }}
+        if (node.children && node.children.length > 0) {{
+            node.children.forEach(child => {{
+                child.parent = node;
+                processNode(child, depth + 1);
             }});
+        }}
+        return node;
+    }}
 
-            // Collapse function
-            function collapse(d) {{
-                if (d.children) {{
-                    d._children = d.children;
-                    d._children.forEach(collapse);
-                    d.children = null;
-                }}
+    // Calculate node positions using simple tree layout
+    function calculateLayout(node) {{
+        let yOffset = 0;
+
+        function layoutNode(n, x) {{
+            n.x = x;
+
+            if (n.expanded && n.children && n.children.length > 0) {{
+                const startY = yOffset;
+                n.children.forEach(child => {{
+                    layoutNode(child, x + config.levelGap);
+                }});
+                // Center parent among children
+                const firstChild = n.children[0];
+                const lastChild = n.children[n.children.length - 1];
+                n.y = (firstChild.y + lastChild.y) / 2;
+            }} else {{
+                n.y = yOffset;
+                yOffset += config.nodeHeight + config.siblingGap;
+            }}
+        }}
+
+        layoutNode(node, config.margin.left);
+        return yOffset;
+    }}
+
+    // Get all visible nodes
+    function getVisibleNodes(node, nodes) {{
+        nodes = nodes || [];
+        nodes.push(node);
+        if (node.expanded && node.children) {{
+            node.children.forEach(child => getVisibleNodes(child, nodes));
+        }}
+        return nodes;
+    }}
+
+    // Get all visible links
+    function getVisibleLinks(node, links) {{
+        links = links || [];
+        if (node.expanded && node.children) {{
+            node.children.forEach(child => {{
+                links.push({{ source: node, target: child }});
+                getVisibleLinks(child, links);
+            }});
+        }}
+        return links;
+    }}
+
+    // Create curved path between nodes
+    function linkPath(source, target) {{
+        const midX = (source.x + target.x) / 2;
+        return "M" + source.x + "," + source.y +
+               "C" + midX + "," + source.y +
+               " " + midX + "," + target.y +
+               " " + target.x + "," + target.y;
+    }}
+
+    // Render the tree
+    function render() {{
+        const height = calculateLayout(root);
+        const svg = document.getElementById("tree-svg");
+        const totalHeight = Math.max(400, height + config.margin.top + config.margin.bottom);
+        const totalWidth = 1200;
+
+        svg.setAttribute("width", totalWidth);
+        svg.setAttribute("height", totalHeight);
+        svg.innerHTML = "";
+
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", "translate(0," + config.margin.top + ")");
+        svg.appendChild(g);
+
+        const nodes = getVisibleNodes(root);
+        const links = getVisibleLinks(root);
+
+        // Draw links
+        links.forEach(link => {{
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("class", "link");
+            path.setAttribute("d", linkPath(link.source, link.target));
+            g.appendChild(path);
+        }});
+
+        // Draw nodes
+        nodes.forEach(node => {{
+            const nodeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            nodeGroup.setAttribute("class", "node");
+            nodeGroup.setAttribute("transform", "translate(" + node.x + "," + node.y + ")");
+
+            // Click handler for expand/collapse
+            if (node.children && node.children.length > 0) {{
+                nodeGroup.onclick = function(e) {{
+                    e.stopPropagation();
+                    node.expanded = !node.expanded;
+                    render();
+                }};
             }}
 
-            // Process initial data - expand root, collapse others
-            function processNode(node, depth = 0) {{
-                if (node.data._children && depth < 1) {{
-                    node.children = node.data._children.map(childData => {{
-                        const child = d3.hierarchy(childData);
-                        child.parent = node;
-                        child.depth = depth + 1;
-                        processNode(child, depth + 1);
-                        return child;
-                    }});
-                }} else if (node.data._children) {{
-                    node._children = node.data._children;
-                }}
-                return node;
+            // Tooltip handlers
+            nodeGroup.onmouseenter = function(e) {{
+                const tooltip = document.getElementById("tooltip");
+                tooltip.innerHTML = "<strong>" + node.name + "</strong><br>" +
+                                   node.dimension + "<br>" +
+                                   "Value: " + formatValue(node.value) + "<br>" +
+                                   "Records: " + (node.count ? node.count.toLocaleString() : "N/A");
+                tooltip.style.display = "block";
+                tooltip.style.left = (e.clientX + 15) + "px";
+                tooltip.style.top = (e.clientY - 10) + "px";
+            }};
+            nodeGroup.onmouseleave = function() {{
+                document.getElementById("tooltip").style.display = "none";
+            }};
+            nodeGroup.onmousemove = function(e) {{
+                const tooltip = document.getElementById("tooltip");
+                tooltip.style.left = (e.clientX + 15) + "px";
+                tooltip.style.top = (e.clientY - 10) + "px";
+            }};
+
+            // Color indicator bar
+            const indicator = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            indicator.setAttribute("x", -4);
+            indicator.setAttribute("y", -15);
+            indicator.setAttribute("width", 4);
+            indicator.setAttribute("height", 30);
+            indicator.setAttribute("rx", 2);
+            indicator.setAttribute("fill", node.color);
+            nodeGroup.appendChild(indicator);
+
+            // Circle
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("class", "node-circle");
+            circle.setAttribute("r", 7);
+            const hasChildren = node.children && node.children.length > 0;
+            circle.setAttribute("fill", hasChildren ? (node.expanded ? "#fff" : "#1976D2") : "#fff");
+            circle.setAttribute("stroke", node.color);
+            nodeGroup.appendChild(circle);
+
+            // Name label
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("class", "node-text");
+            text.setAttribute("x", 15);
+            text.setAttribute("y", -5);
+            text.textContent = node.name;
+            if (node.depth === 0) text.style.fontWeight = "bold";
+            nodeGroup.appendChild(text);
+
+            // Value label
+            const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            valueText.setAttribute("class", "node-value");
+            valueText.setAttribute("x", 15);
+            valueText.setAttribute("y", 10);
+            valueText.textContent = formatValue(node.value);
+            nodeGroup.appendChild(valueText);
+
+            // Bar background
+            const barBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            barBg.setAttribute("class", "node-bar-bg");
+            barBg.setAttribute("x", 15);
+            barBg.setAttribute("y", 16);
+            barBg.setAttribute("width", config.barWidth);
+            barBg.setAttribute("height", config.barHeight);
+            barBg.setAttribute("rx", 2);
+            nodeGroup.appendChild(barBg);
+
+            // Bar fill (relative to siblings)
+            const siblings = node.parent ? node.parent.children : [node];
+            const values = siblings.map(s => s.value);
+            const maxVal = Math.max(...values);
+            const minVal = Math.min(...values);
+            const range = maxVal - minVal || 1;
+            const barFillWidth = Math.max(4, ((node.value - minVal) / range) * config.barWidth);
+
+            const barFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            barFill.setAttribute("class", "node-bar");
+            barFill.setAttribute("x", 15);
+            barFill.setAttribute("y", 16);
+            barFill.setAttribute("width", barFillWidth);
+            barFill.setAttribute("height", config.barHeight);
+            barFill.setAttribute("rx", 2);
+            barFill.setAttribute("fill", node.color);
+            nodeGroup.appendChild(barFill);
+
+            // Expand/collapse indicator
+            if (hasChildren) {{
+                const indicator = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                indicator.setAttribute("x", 0);
+                indicator.setAttribute("y", 4);
+                indicator.setAttribute("text-anchor", "middle");
+                indicator.setAttribute("font-size", "10px");
+                indicator.setAttribute("fill", node.expanded ? "#1976D2" : "#fff");
+                indicator.setAttribute("pointer-events", "none");
+                indicator.textContent = node.expanded ? "−" : "+";
+                nodeGroup.appendChild(indicator);
             }}
 
-            const rootNode = d3.hierarchy(treeData);
-            processNode(rootNode);
-            rootNode.x0 = 0;
-            rootNode.y0 = 0;
+            g.appendChild(nodeGroup);
+        }});
+    }}
 
-            let i = 0;
-            const duration = 400;
-
-            update(rootNode);
-
-            function update(source) {{
-                // Compute the new tree layout
-                const treeData = treeLayout(rootNode);
-                const nodes = treeData.descendants();
-                const links = treeData.links();
-
-                // Normalize for fixed-depth
-                nodes.forEach(d => {{
-                    d.y = d.depth * 220;
-                }});
-
-                // Calculate SVG height
-                let minX = Infinity, maxX = -Infinity;
-                nodes.forEach(d => {{
-                    if (d.x < minX) minX = d.x;
-                    if (d.x > maxX) maxX = d.x;
-                }});
-                const height = Math.max(400, maxX - minX + 100);
-
-                d3.select("#tree-container svg")
-                    .attr("height", height + margin.top + margin.bottom);
-
-                // Shift tree to center vertically
-                const yOffset = -minX + 50;
-                svg.attr("transform", `translate(${{margin.left}},${{yOffset}})`);
-
-                // ****************** Nodes section ***************************
-                const node = svg.selectAll("g.node")
-                    .data(nodes, d => d.id || (d.id = ++i));
-
-                // Enter new nodes at the parent's previous position
-                const nodeEnter = node.enter().append("g")
-                    .attr("class", "node")
-                    .attr("transform", d => `translate(${{source.y0}},${{source.x0}})`)
-                    .on("click", (event, d) => click(event, d))
-                    .on("mouseover", (event, d) => {{
-                        tooltip.style("display", "block")
-                            .html(`<strong>${{d.data.name}}</strong><br/>
-                                   ${{d.data.dimension}}<br/>
-                                   Value: ${{formatValue(d.data.value)}}<br/>
-                                   Records: ${{d.data.count?.toLocaleString() || 'N/A'}}`)
-                            .style("left", (event.pageX + 10) + "px")
-                            .style("top", (event.pageY - 10) + "px");
-                    }})
-                    .on("mouseout", () => {{
-                        tooltip.style("display", "none");
-                    }});
-
-                // Add colored bar indicator
-                nodeEnter.append("rect")
-                    .attr("class", "bar-indicator")
-                    .attr("x", -4)
-                    .attr("y", -12)
-                    .attr("width", 4)
-                    .attr("height", 24)
-                    .attr("rx", 2)
-                    .attr("fill", d => d.data.color || "#1976D2");
-
-                // Add Circle for the nodes
-                nodeEnter.append("circle")
-                    .attr("r", 1e-6)
-                    .style("fill", d => d._children || d.data._children ? "#1976D2" : "#fff")
-                    .style("stroke", d => d.data.color || "#1976D2");
-
-                // Add labels for the nodes
-                nodeEnter.append("text")
-                    .attr("dy", "-0.5em")
-                    .attr("x", 15)
-                    .attr("text-anchor", "start")
-                    .text(d => d.data.name)
-                    .style("font-weight", d => d.depth === 0 ? "bold" : "normal");
-
-                // Add value labels
-                nodeEnter.append("text")
-                    .attr("class", "value-text")
-                    .attr("dy", "1em")
-                    .attr("x", 15)
-                    .attr("text-anchor", "start")
-                    .text(d => formatValue(d.data.value));
-
-                // Add bar background
-                nodeEnter.append("rect")
-                    .attr("class", "bar-bg")
-                    .attr("x", 15)
-                    .attr("y", 18)
-                    .attr("width", barWidth)
-                    .attr("height", barHeight)
-                    .attr("rx", 2);
-
-                // Add bar fill
-                nodeEnter.append("rect")
-                    .attr("class", "bar-fill")
-                    .attr("x", 15)
-                    .attr("y", 18)
-                    .attr("width", 0)
-                    .attr("height", barHeight)
-                    .attr("rx", 2)
-                    .attr("fill", d => d.data.color || "#1976D2");
-
-                // UPDATE
-                const nodeUpdate = nodeEnter.merge(node);
-
-                // Transition to the proper position for the node
-                nodeUpdate.transition()
-                    .duration(duration)
-                    .attr("transform", d => `translate(${{d.y}},${{d.x}})`);
-
-                // Update the node attributes and style
-                nodeUpdate.select("circle")
-                    .attr("r", 6)
-                    .style("fill", d => d._children || d.data._children ? "#1976D2" : "#fff")
-                    .style("stroke", d => d.data.color || "#1976D2")
-                    .attr("cursor", d => (d._children || d.data._children) ? "pointer" : "default");
-
-                // Update bar fill width based on relative value
-                nodeUpdate.select(".bar-fill")
-                    .transition()
-                    .duration(duration)
-                    .attr("width", d => {{
-                        // Find siblings to calculate relative width
-                        const siblings = d.parent ? d.parent.children || [] : [d];
-                        const values = siblings.map(s => s.data.value);
-                        const maxVal = Math.max(...values);
-                        const minVal = Math.min(...values);
-                        const range = maxVal - minVal || 1;
-                        return ((d.data.value - minVal) / range) * barWidth || 5;
-                    }});
-
-                // Remove any exiting nodes
-                const nodeExit = node.exit().transition()
-                    .duration(duration)
-                    .attr("transform", d => `translate(${{source.y}},${{source.x}})`)
-                    .remove();
-
-                nodeExit.select("circle")
-                    .attr("r", 1e-6);
-
-                nodeExit.select("text")
-                    .style("fill-opacity", 1e-6);
-
-                // ****************** Links section ***************************
-                const link = svg.selectAll("path.link")
-                    .data(links, d => d.target.id);
-
-                // Enter any new links at the parent's previous position
-                const linkEnter = link.enter().insert("path", "g")
-                    .attr("class", "link")
-                    .attr("d", d => {{
-                        const o = {{x: source.x0, y: source.y0}};
-                        return diagonal(o, o);
-                    }});
-
-                // UPDATE
-                const linkUpdate = linkEnter.merge(link);
-
-                // Transition back to the parent element position
-                linkUpdate.transition()
-                    .duration(duration)
-                    .attr("d", d => diagonal(d.source, d.target));
-
-                // Remove any exiting links
-                link.exit().transition()
-                    .duration(duration)
-                    .attr("d", d => {{
-                        const o = {{x: source.x, y: source.y}};
-                        return diagonal(o, o);
-                    }})
-                    .remove();
-
-                // Store the old positions for transition
-                nodes.forEach(d => {{
-                    d.x0 = d.x;
-                    d.y0 = d.y;
-                }});
-
-                // Creates a curved path from parent to child
-                function diagonal(s, d) {{
-                    return `M ${{s.y}} ${{s.x}}
-                            C ${{(s.y + d.y) / 2}} ${{s.x}},
-                              ${{(s.y + d.y) / 2}} ${{d.x}},
-                              ${{d.y}} ${{d.x}}`;
-                }}
-
-                // Toggle children on click
-                function click(event, d) {{
-                    if (d._children) {{
-                        // Expand: convert stored data to hierarchy nodes
-                        d.children = d._children.map ? d._children :
-                            d._children.map(c => {{
-                                const node = d3.hierarchy(c);
-                                node.parent = d;
-                                node.depth = d.depth + 1;
-                                return node;
-                            }});
-
-                        // If _children was raw data, convert it
-                        if (d.data._children && !d._children.map) {{
-                            d.children = d.data._children.map(childData => {{
-                                const child = d3.hierarchy(childData);
-                                child.parent = d;
-                                child.depth = d.depth + 1;
-                                // Process nested children
-                                if (childData._children) {{
-                                    child._children = childData._children;
-                                }}
-                                return child;
-                            }});
-                        }}
-                        d._children = null;
-                    }} else if (d.children) {{
-                        // Collapse
-                        d._children = d.children;
-                        d.children = null;
-                    }} else if (d.data._children) {{
-                        // First expansion from raw data
-                        d.children = d.data._children.map(childData => {{
-                            const child = d3.hierarchy(childData);
-                            child.parent = d;
-                            child.depth = d.depth + 1;
-                            if (childData._children) {{
-                                child._children = childData._children;
-                            }}
-                            return child;
-                        }});
-                    }}
-                    update(d);
-                }}
-            }}
-        </script>
-    </body>
-    </html>
-    """
-
+    // Initialize
+    root = processNode(data, 0);
+    render();
+}})();
+</script>
+</body>
+</html>
+'''
     return html
 
 
 # ============================================
-# DATA CONFIGURATION
+# CONFIG
 # ============================================
 
 DATA_CONFIG = {
@@ -579,6 +470,7 @@ DATA_CONFIG = {
     "dimensions": ["Division", "Depot", "Route", "Direction", "Period"]
 }
 
+
 # ============================================
 # SESSION STATE
 # ============================================
@@ -586,7 +478,8 @@ DATA_CONFIG = {
 if 'selected_metric' not in st.session_state:
     st.session_state.selected_metric = 'OTP'
 if 'selected_dimensions' not in st.session_state:
-    st.session_state.selected_dimensions = ["Division", "Depot", "Route", "Direction", "Period"]
+    st.session_state.selected_dimensions = DATA_CONFIG["dimensions"].copy()
+
 
 # ============================================
 # MAIN APP
@@ -610,13 +503,11 @@ def main():
         st.markdown("---")
 
         st.markdown("### Dimension Order")
-        st.caption("Drag to reorder (use multiselect)")
-
         selected_dims = st.multiselect(
-            "Select dimensions to include",
+            "Select and order dimensions",
             options=DATA_CONFIG["dimensions"],
             default=st.session_state.selected_dimensions,
-            help="Order matters - first dimension is the first level"
+            help="Order determines hierarchy depth"
         )
 
         if selected_dims:
@@ -625,27 +516,28 @@ def main():
         st.markdown("---")
         st.markdown("### How to Use")
         st.markdown("""
-        - **Click** filled circles to expand/collapse
-        - **Hover** over nodes for details
-        - Blue circles have children to explore
-        - Bars show relative performance within each level
+        - **Click** nodes with **+** to expand
+        - **Click** nodes with **−** to collapse
+        - **Hover** for detailed tooltips
+        - Blue filled = has children
+        - White filled = expanded or leaf
         """)
 
         st.markdown("---")
-        st.markdown("### Legend")
-        cols = st.columns(2)
-        with cols[0]:
+        st.markdown("### Performance Legend")
+        col1, col2 = st.columns(2)
+        with col1:
             st.markdown("🟢 High")
             st.markdown("🟡 Medium")
-        with cols[1]:
+        with col2:
             st.markdown("🟠 Low")
-            st.markdown("🔵 Root/Branch")
+            st.markdown("🔵 Root")
 
     # Header
     st.title("Decomposition Tree")
-    st.caption("Click nodes to expand/collapse - Power BI style interactive drill-down")
+    st.caption("Interactive drill-down analysis - Click nodes to expand/collapse")
 
-    # Build hierarchical data
+    # Build and display tree
     if st.session_state.selected_dimensions:
         tree_data = build_hierarchy(
             df,
@@ -653,20 +545,15 @@ def main():
             selected_metric
         )
 
-        # Create and display D3 visualization
-        html_content = create_d3_collapsible_tree(tree_data, selected_metric)
+        html_content = create_tree_visualization(tree_data, selected_metric)
         components.html(html_content, height=700, scrolling=True)
 
-        # Summary stats
+        # Summary
         st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
 
-        if selected_metric == "OTP":
-            total_value = np.average(df['OTP'], weights=df['Trips'])
-            display_value = f"{total_value:.1f}%"
-        else:
-            total_value = df['Trips'].sum()
-            display_value = f"{total_value:,}"
+        total_value = calculate_metric(df, selected_metric)
+        display_value = f"{total_value:.1f}%" if selected_metric == "OTP" else f"{total_value:,}"
 
         with col1:
             st.metric("Total Value", display_value)
@@ -677,7 +564,8 @@ def main():
         with col4:
             st.metric("Metric", selected_metric)
     else:
-        st.warning("Please select at least one dimension in the sidebar.")
+        st.warning("Please select at least one dimension.")
+
 
 if __name__ == "__main__":
     main()
