@@ -1,6 +1,6 @@
 """
-Decomposition Tree - Power BI Style with D3.js
-A drill-down analysis tool using st.components.v1.html for D3 visualization
+Decomposition Tree - Power BI Style with D3.js Collapsible Tree
+A drill-down analysis tool using st.components.v1.html for interactive D3 visualization
 Compatible with Streamlit in Snowflake (Custom UI feature GA August 2024)
 """
 
@@ -27,33 +27,39 @@ def generate_mock_data() -> pd.DataFrame:
     """Generate realistic mock transit data similar to Power BI example"""
     np.random.seed(42)
 
-    # Structure similar to the Power BI image (Transit/Bus data)
     divisions = ['Brooklyn', 'Queens South', 'Staten Island', 'Bronx', 'Queens North', 'Manhattan']
 
     depots = {
-        'Brooklyn': ['Jackie Gleason', 'Fresh Pond', 'East New York', 'Ulmer Park', 'Flatbush'],
-        'Queens South': ['Jamaica', 'JFK', 'Rockaways'],
+        'Brooklyn': ['Jackie Gleason', 'Fresh Pond', 'East New York', 'Ulmer Park', 'Flatbush', 'Grand Avenue'],
+        'Queens South': ['Jamaica', 'JFK Depot', 'Rockaways'],
         'Staten Island': ['Castleton', 'Charleston', 'Yukon'],
         'Bronx': ['Gun Hill', 'Kingsbridge', 'West Farms'],
         'Queens North': ['Casey Stengel', 'LaGuardia', 'College Point'],
         'Manhattan': ['Mother Clara Hale', 'Manhattanville', 'Michael Quill']
     }
 
-    routes_per_depot = ['B37', 'B68', 'B16', 'B11', 'B4', 'B43', 'B70', 'B8', 'B61', 'B63']
+    routes_by_division = {
+        'Brooklyn': ['B37', 'B68', 'B16', 'B11', 'B4', 'B43', 'B70', 'B8', 'B61', 'B63'],
+        'Queens South': ['Q1', 'Q2', 'Q3', 'Q5', 'Q6'],
+        'Staten Island': ['S40', 'S44', 'S46', 'S48', 'S52'],
+        'Bronx': ['Bx1', 'Bx2', 'Bx4', 'Bx5', 'Bx6'],
+        'Queens North': ['Q15', 'Q16', 'Q17', 'Q19', 'Q20'],
+        'Manhattan': ['M1', 'M2', 'M3', 'M4', 'M5']
+    }
+
     directions = ['SB', 'NB']
     periods = ['Overnight', 'Midday', 'PM', 'AM']
 
     data = []
-    for _ in range(2000):
+    for _ in range(3000):
         division = np.random.choice(divisions, p=[0.25, 0.18, 0.12, 0.15, 0.15, 0.15])
         depot = np.random.choice(depots[division])
-        route = np.random.choice(routes_per_depot)
+        route = np.random.choice(routes_by_division[division])
         direction = np.random.choice(directions, p=[0.52, 0.48])
         period = np.random.choice(periods, p=[0.15, 0.30, 0.30, 0.25])
 
         # OTP (On-Time Performance) - percentage metric
         base_otp = np.random.uniform(55, 78)
-        # Adjust by various factors
         if division == 'Manhattan':
             base_otp += 5
         if period == 'Overnight':
@@ -75,159 +81,92 @@ def generate_mock_data() -> pd.DataFrame:
 
     return pd.DataFrame(data)
 
-# ============================================
-# DATA CONFIGURATION
-# ============================================
-
-DATA_CONFIG = {
-    "metrics": {
-        "OTP": {"column": "OTP", "format": "percent", "label": "On-Time Performance"},
-        "Trips": {"column": "Trips", "format": "number", "label": "Total Trips"}
-    },
-    "dimensions": ["Division", "Depot", "Route", "Direction", "Period"]
-}
 
 # ============================================
-# HELPER FUNCTIONS
+# BUILD HIERARCHICAL DATA
 # ============================================
 
-def filter_data(df: pd.DataFrame, drill_path: List[Tuple[str, str]]) -> pd.DataFrame:
-    """Filter dataframe based on drill path"""
-    filtered_df = df.copy()
-    for dimension, value in drill_path:
-        filtered_df = filtered_df[filtered_df[dimension] == value]
-    return filtered_df
+def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dict:
+    """Build a nested hierarchical structure for D3 tree"""
 
-def get_available_dimensions(drill_path: List[Tuple[str, str]]) -> List[str]:
-    """Get dimensions not yet drilled into"""
-    used_dimensions = {dim for dim, _ in drill_path}
-    return [dim for dim in DATA_CONFIG["dimensions"] if dim not in used_dimensions]
+    def calc_metric(subset):
+        if metric == "OTP":
+            if len(subset) == 0 or subset['Trips'].sum() == 0:
+                return 0
+            return round(np.average(subset['OTP'], weights=subset['Trips']), 1)
+        else:
+            return int(subset['Trips'].sum())
 
-def calculate_decomposition(df: pd.DataFrame, dimension: str, metric: str) -> List[Dict]:
-    """Calculate decomposition breakdown for a dimension"""
-    metric_config = DATA_CONFIG["metrics"][metric]
-    metric_col = metric_config["column"]
+    def get_color(value, min_val, max_val):
+        if max_val == min_val:
+            normalized = 0.5
+        else:
+            normalized = (value - min_val) / (max_val - min_val)
 
-    if metric == "OTP":
-        # Weighted average for OTP
-        decomp = df.groupby(dimension).apply(
-            lambda x: np.average(x[metric_col], weights=x['Trips'])
-        ).reset_index()
-        decomp.columns = ['name', 'value']
-    else:
-        decomp = df.groupby(dimension)[metric_col].sum().reset_index()
-        decomp.columns = ['name', 'value']
+        if normalized >= 0.7:
+            return "#2E7D32"  # Green
+        elif normalized >= 0.5:
+            return "#8BC34A"  # Light green
+        elif normalized >= 0.3:
+            return "#FFC107"  # Yellow/Amber
+        else:
+            return "#FF9800"  # Orange
 
-    decomp = decomp.sort_values('value', ascending=True)  # Sort ascending for horizontal bars
+    def build_level(data, dims_remaining, parent_path=""):
+        if not dims_remaining or len(data) == 0:
+            return []
 
-    return decomp.to_dict('records')
+        current_dim = dims_remaining[0]
+        next_dims = dims_remaining[1:]
 
-def get_color_scale(value: float, min_val: float, max_val: float) -> str:
-    """Get color based on value - green for high, yellow for mid, orange/red for low"""
-    if max_val == min_val:
-        normalized = 0.5
-    else:
-        normalized = (value - min_val) / (max_val - min_val)
+        groups = data.groupby(current_dim)
+        children = []
 
-    if normalized >= 0.7:
-        return "#2E7D32"  # Green
-    elif normalized >= 0.5:
-        return "#8BC34A"  # Light green
-    elif normalized >= 0.3:
-        return "#FFC107"  # Yellow/Amber
-    else:
-        return "#FF9800"  # Orange
+        values = []
+        for name, group in groups:
+            values.append(calc_metric(group))
 
-def build_tree_data(df: pd.DataFrame, drill_path: List[Tuple[str, str]], metric: str) -> Dict:
-    """Build the complete tree data structure for D3"""
-    metric_config = DATA_CONFIG["metrics"][metric]
+        min_val = min(values) if values else 0
+        max_val = max(values) if values else 1
 
-    # Calculate root value
-    if metric == "OTP":
-        root_value = np.average(df['OTP'], weights=df['Trips'])
-    else:
-        root_value = df[metric_config["column"]].sum()
+        for (name, group), value in zip(groups, values):
+            node = {
+                "name": str(name),
+                "dimension": current_dim,
+                "value": value,
+                "color": get_color(value, min_val, max_val),
+                "count": len(group)
+            }
 
-    tree_data = {
-        "name": "CJTP",  # Root node name
-        "value": round(root_value, 1),
-        "dimension": None,
-        "path": [],
-        "children": []
+            # Recursively build children
+            if next_dims:
+                node["_children"] = build_level(group, next_dims, f"{parent_path}/{name}")
+
+            children.append(node)
+
+        # Sort by value descending
+        children.sort(key=lambda x: x["value"], reverse=True)
+        return children
+
+    # Root node
+    root_value = calc_metric(df)
+    root = {
+        "name": "CJTP",
+        "dimension": "Total",
+        "value": root_value,
+        "color": "#1976D2",
+        "count": len(df),
+        "_children": build_level(df, dimensions)
     }
 
-    # Build each level of the tree based on drill path and available dimensions
-    available_dims = get_available_dimensions(drill_path)
+    return root
 
-    for i, dim in enumerate(available_dims[:5]):  # Max 5 levels
-        # Get filtered data up to current path
-        current_path = drill_path[:] if i == 0 else drill_path + [(available_dims[j], None) for j in range(i)]
-        filtered = filter_data(df, drill_path)
 
-        decomp = calculate_decomposition(filtered, dim, metric)
+def create_d3_collapsible_tree(tree_data: Dict, metric: str) -> str:
+    """Create the D3.js collapsible tree visualization"""
 
-        level_data = {
-            "dimension": dim,
-            "items": decomp
-        }
-        tree_data["children"].append(level_data)
-
-    return tree_data
-
-# ============================================
-# D3 VISUALIZATION COMPONENT
-# ============================================
-
-def create_d3_decomposition_tree(df: pd.DataFrame, drill_path: List[Tuple[str, str]],
-                                  selected_metric: str) -> str:
-    """Create the D3.js visualization HTML"""
-
-    metric_config = DATA_CONFIG["metrics"][selected_metric]
-    available_dims = get_available_dimensions(drill_path)
-
-    # Calculate root value
-    root_df = filter_data(df, drill_path)
-    if selected_metric == "OTP":
-        root_value = np.average(root_df['OTP'], weights=root_df['Trips'])
-    else:
-        root_value = root_df[metric_config["column"]].sum()
-
-    # Build columns data
-    columns_data = []
-
-    # Add drilled path nodes
-    path_nodes = [{"name": "CJTP", "value": round(root_value, 1), "dimension": None}]
-
-    current_df = df.copy()
-    for dim, val in drill_path:
-        current_df = current_df[current_df[dim] == val]
-        if selected_metric == "OTP":
-            node_value = np.average(current_df['OTP'], weights=current_df['Trips'])
-        else:
-            node_value = current_df[metric_config["column"]].sum()
-        path_nodes.append({"name": val, "value": round(node_value, 1), "dimension": dim})
-
-    # Build decomposition columns for available dimensions
-    filtered_df = filter_data(df, drill_path)
-
-    for dim in available_dims[:5]:
-        decomp = calculate_decomposition(filtered_df, dim, selected_metric)
-        values = [item['value'] for item in decomp]
-        min_val, max_val = min(values), max(values)
-
-        for item in decomp:
-            item['color'] = get_color_scale(item['value'], min_val, max_val)
-
-        columns_data.append({
-            "dimension": dim,
-            "items": decomp
-        })
-
-    # Convert to JSON for JavaScript
-    path_json = json.dumps(path_nodes)
-    columns_json = json.dumps(columns_data)
-    drill_path_json = json.dumps(drill_path)
-    format_type = metric_config["format"]
+    tree_json = json.dumps(tree_data)
+    format_type = "percent" if metric == "OTP" else "number"
 
     html = f"""
     <!DOCTYPE html>
@@ -242,133 +181,50 @@ def create_d3_decomposition_tree(df: pd.DataFrame, drill_path: List[Tuple[str, s
             }}
             body {{
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: #fafafa;
-                overflow-x: auto;
-            }}
-            .container {{
-                display: flex;
-                align-items: flex-start;
-                padding: 20px;
-                min-width: max-content;
-            }}
-            .column {{
-                display: flex;
-                flex-direction: column;
-                margin-right: 5px;
-                min-width: 180px;
-            }}
-            .column-header {{
-                font-size: 13px;
-                font-weight: 600;
-                color: #333;
-                padding: 8px 12px;
-                border-bottom: 2px solid #ddd;
-                margin-bottom: 8px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }}
-            .column-header .clear-btn {{
-                cursor: pointer;
-                color: #999;
-                font-size: 16px;
-            }}
-            .column-header .clear-btn:hover {{
-                color: #333;
+                background: #ffffff;
+                overflow: auto;
             }}
             .node {{
-                display: flex;
-                align-items: center;
-                padding: 6px 10px;
-                margin: 3px 0;
-                border-radius: 4px;
                 cursor: pointer;
-                transition: all 0.2s;
-                position: relative;
             }}
-            .node:hover {{
-                background: #f0f0f0;
+            .node circle {{
+                stroke-width: 2px;
             }}
-            .node.selected {{
-                background: #e3f2fd;
-            }}
-            .node-bar {{
-                height: 22px;
-                border-radius: 2px;
-                margin-right: 10px;
-                min-width: 5px;
-            }}
-            .node-content {{
-                flex: 1;
-                display: flex;
-                flex-direction: column;
-            }}
-            .node-name {{
-                font-size: 13px;
-                font-weight: 500;
-                color: #333;
-            }}
-            .node-value {{
+            .node text {{
                 font-size: 12px;
-                color: #666;
+                fill: #333;
             }}
-            .node-bar-bg {{
-                position: absolute;
-                right: 10px;
-                top: 50%;
-                transform: translateY(-50%);
-                width: 60px;
-                height: 8px;
-                background: #e0e0e0;
-                border-radius: 4px;
-                overflow: hidden;
-            }}
-            .node-bar-fill {{
-                height: 100%;
-                border-radius: 4px;
-            }}
-            .path-node {{
-                background: linear-gradient(135deg, #1976D2 0%, #1565C0 100%);
-                color: white;
-                padding: 15px 20px;
-                border-radius: 6px;
-                margin-right: 10px;
-                min-width: 100px;
-                text-align: center;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            }}
-            .path-node .label {{
+            .node .value-text {{
                 font-size: 11px;
-                opacity: 0.9;
-                margin-bottom: 4px;
+                fill: #666;
             }}
-            .path-node .value {{
-                font-size: 18px;
-                font-weight: 600;
+            .node .bar-bg {{
+                fill: #e0e0e0;
             }}
-            .path-connector {{
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 40px;
-            }}
-            .connector-line {{
-                stroke: #1976D2;
-                stroke-width: 2;
+            .link {{
                 fill: none;
+                stroke: #1976D2;
+                stroke-opacity: 0.4;
+                stroke-width: 1.5px;
             }}
-            svg.tree-svg {{
-                overflow: visible;
+            .tooltip {{
+                position: absolute;
+                background: rgba(0,0,0,0.8);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                pointer-events: none;
+                z-index: 1000;
             }}
         </style>
     </head>
     <body>
         <div id="tree-container"></div>
+        <div id="tooltip" class="tooltip" style="display:none;"></div>
 
         <script>
-            const pathNodes = {path_json};
-            const columnsData = {columns_json};
-            const drillPath = {drill_path_json};
+            const treeData = {tree_json};
             const formatType = "{format_type}";
 
             function formatValue(val) {{
@@ -379,133 +235,330 @@ def create_d3_decomposition_tree(df: pd.DataFrame, drill_path: List[Tuple[str, s
                 }}
             }}
 
-            function sendDrillAction(dimension, value) {{
-                // Send message to Streamlit parent
-                window.parent.postMessage({{
-                    type: 'streamlit:setComponentValue',
-                    data: {{ action: 'drill', dimension: dimension, value: value }}
-                }}, '*');
+            // Set dimensions
+            const margin = {{top: 20, right: 200, bottom: 20, left: 100}};
+            const width = 1200;
+            const barWidth = 60;
+            const barHeight = 8;
+
+            // Calculate dynamic height based on expanded nodes
+            let nodeCount = 0;
+            function countNodes(node) {{
+                nodeCount++;
+                if (node.children) {{
+                    node.children.forEach(countNodes);
+                }}
             }}
 
-            function sendClearAction(dimension) {{
-                window.parent.postMessage({{
-                    type: 'streamlit:setComponentValue',
-                    data: {{ action: 'clear', dimension: dimension }}
-                }}, '*');
+            // Create SVG
+            const svg = d3.select("#tree-container")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", 800)
+                .append("g")
+                .attr("transform", `translate(${{margin.left}},${{margin.top}})`);
+
+            // Create tooltip
+            const tooltip = d3.select("#tooltip");
+
+            // Tree layout
+            const treeLayout = d3.tree().nodeSize([35, 200]);
+
+            // Create hierarchy
+            const root = d3.hierarchy(treeData);
+            root.x0 = 0;
+            root.y0 = 0;
+
+            // Initially expand first two levels
+            root.descendants().forEach((d, i) => {{
+                if (d.depth < 1) {{
+                    d._children = d.children || d.data._children?.map(c => d3.hierarchy(c));
+                    if (d.data._children && !d.children) {{
+                        d.children = d.data._children.map(c => {{
+                            const node = d3.hierarchy(c);
+                            node.parent = d;
+                            node.depth = d.depth + 1;
+                            return node;
+                        }});
+                    }}
+                }} else {{
+                    if (d.children) {{
+                        d._children = d.children;
+                        d.children = null;
+                    }} else if (d.data._children) {{
+                        d._children = d.data._children.map(c => {{
+                            const node = d3.hierarchy(c);
+                            node.parent = d;
+                            node.depth = d.depth + 1;
+                            return node;
+                        }});
+                    }}
+                }}
+            }});
+
+            // Collapse function
+            function collapse(d) {{
+                if (d.children) {{
+                    d._children = d.children;
+                    d._children.forEach(collapse);
+                    d.children = null;
+                }}
             }}
 
-            // Build the visualization
-            const container = d3.select("#tree-container");
-            const mainDiv = container.append("div").attr("class", "container");
+            // Process initial data - expand root, collapse others
+            function processNode(node, depth = 0) {{
+                if (node.data._children && depth < 1) {{
+                    node.children = node.data._children.map(childData => {{
+                        const child = d3.hierarchy(childData);
+                        child.parent = node;
+                        child.depth = depth + 1;
+                        processNode(child, depth + 1);
+                        return child;
+                    }});
+                }} else if (node.data._children) {{
+                    node._children = node.data._children;
+                }}
+                return node;
+            }}
 
-            // Render path nodes (drilled items)
-            pathNodes.forEach((node, i) => {{
-                if (i > 0) {{
-                    // Add connector
-                    const connectorSvg = mainDiv.append("svg")
-                        .attr("width", 40)
-                        .attr("height", 60)
-                        .attr("class", "tree-svg");
+            const rootNode = d3.hierarchy(treeData);
+            processNode(rootNode);
+            rootNode.x0 = 0;
+            rootNode.y0 = 0;
 
-                    connectorSvg.append("path")
-                        .attr("d", "M0,30 C20,30 20,30 40,30")
-                        .attr("class", "connector-line");
+            let i = 0;
+            const duration = 400;
+
+            update(rootNode);
+
+            function update(source) {{
+                // Compute the new tree layout
+                const treeData = treeLayout(rootNode);
+                const nodes = treeData.descendants();
+                const links = treeData.links();
+
+                // Normalize for fixed-depth
+                nodes.forEach(d => {{
+                    d.y = d.depth * 220;
+                }});
+
+                // Calculate SVG height
+                let minX = Infinity, maxX = -Infinity;
+                nodes.forEach(d => {{
+                    if (d.x < minX) minX = d.x;
+                    if (d.x > maxX) maxX = d.x;
+                }});
+                const height = Math.max(400, maxX - minX + 100);
+
+                d3.select("#tree-container svg")
+                    .attr("height", height + margin.top + margin.bottom);
+
+                // Shift tree to center vertically
+                const yOffset = -minX + 50;
+                svg.attr("transform", `translate(${{margin.left}},${{yOffset}})`);
+
+                // ****************** Nodes section ***************************
+                const node = svg.selectAll("g.node")
+                    .data(nodes, d => d.id || (d.id = ++i));
+
+                // Enter new nodes at the parent's previous position
+                const nodeEnter = node.enter().append("g")
+                    .attr("class", "node")
+                    .attr("transform", d => `translate(${{source.y0}},${{source.x0}})`)
+                    .on("click", (event, d) => click(event, d))
+                    .on("mouseover", (event, d) => {{
+                        tooltip.style("display", "block")
+                            .html(`<strong>${{d.data.name}}</strong><br/>
+                                   ${{d.data.dimension}}<br/>
+                                   Value: ${{formatValue(d.data.value)}}<br/>
+                                   Records: ${{d.data.count?.toLocaleString() || 'N/A'}}`)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 10) + "px");
+                    }})
+                    .on("mouseout", () => {{
+                        tooltip.style("display", "none");
+                    }});
+
+                // Add colored bar indicator
+                nodeEnter.append("rect")
+                    .attr("class", "bar-indicator")
+                    .attr("x", -4)
+                    .attr("y", -12)
+                    .attr("width", 4)
+                    .attr("height", 24)
+                    .attr("rx", 2)
+                    .attr("fill", d => d.data.color || "#1976D2");
+
+                // Add Circle for the nodes
+                nodeEnter.append("circle")
+                    .attr("r", 1e-6)
+                    .style("fill", d => d._children || d.data._children ? "#1976D2" : "#fff")
+                    .style("stroke", d => d.data.color || "#1976D2");
+
+                // Add labels for the nodes
+                nodeEnter.append("text")
+                    .attr("dy", "-0.5em")
+                    .attr("x", 15)
+                    .attr("text-anchor", "start")
+                    .text(d => d.data.name)
+                    .style("font-weight", d => d.depth === 0 ? "bold" : "normal");
+
+                // Add value labels
+                nodeEnter.append("text")
+                    .attr("class", "value-text")
+                    .attr("dy", "1em")
+                    .attr("x", 15)
+                    .attr("text-anchor", "start")
+                    .text(d => formatValue(d.data.value));
+
+                // Add bar background
+                nodeEnter.append("rect")
+                    .attr("class", "bar-bg")
+                    .attr("x", 15)
+                    .attr("y", 18)
+                    .attr("width", barWidth)
+                    .attr("height", barHeight)
+                    .attr("rx", 2);
+
+                // Add bar fill
+                nodeEnter.append("rect")
+                    .attr("class", "bar-fill")
+                    .attr("x", 15)
+                    .attr("y", 18)
+                    .attr("width", 0)
+                    .attr("height", barHeight)
+                    .attr("rx", 2)
+                    .attr("fill", d => d.data.color || "#1976D2");
+
+                // UPDATE
+                const nodeUpdate = nodeEnter.merge(node);
+
+                // Transition to the proper position for the node
+                nodeUpdate.transition()
+                    .duration(duration)
+                    .attr("transform", d => `translate(${{d.y}},${{d.x}})`);
+
+                // Update the node attributes and style
+                nodeUpdate.select("circle")
+                    .attr("r", 6)
+                    .style("fill", d => d._children || d.data._children ? "#1976D2" : "#fff")
+                    .style("stroke", d => d.data.color || "#1976D2")
+                    .attr("cursor", d => (d._children || d.data._children) ? "pointer" : "default");
+
+                // Update bar fill width based on relative value
+                nodeUpdate.select(".bar-fill")
+                    .transition()
+                    .duration(duration)
+                    .attr("width", d => {{
+                        // Find siblings to calculate relative width
+                        const siblings = d.parent ? d.parent.children || [] : [d];
+                        const values = siblings.map(s => s.data.value);
+                        const maxVal = Math.max(...values);
+                        const minVal = Math.min(...values);
+                        const range = maxVal - minVal || 1;
+                        return ((d.data.value - minVal) / range) * barWidth || 5;
+                    }});
+
+                // Remove any exiting nodes
+                const nodeExit = node.exit().transition()
+                    .duration(duration)
+                    .attr("transform", d => `translate(${{source.y}},${{source.x}})`)
+                    .remove();
+
+                nodeExit.select("circle")
+                    .attr("r", 1e-6);
+
+                nodeExit.select("text")
+                    .style("fill-opacity", 1e-6);
+
+                // ****************** Links section ***************************
+                const link = svg.selectAll("path.link")
+                    .data(links, d => d.target.id);
+
+                // Enter any new links at the parent's previous position
+                const linkEnter = link.enter().insert("path", "g")
+                    .attr("class", "link")
+                    .attr("d", d => {{
+                        const o = {{x: source.x0, y: source.y0}};
+                        return diagonal(o, o);
+                    }});
+
+                // UPDATE
+                const linkUpdate = linkEnter.merge(link);
+
+                // Transition back to the parent element position
+                linkUpdate.transition()
+                    .duration(duration)
+                    .attr("d", d => diagonal(d.source, d.target));
+
+                // Remove any exiting links
+                link.exit().transition()
+                    .duration(duration)
+                    .attr("d", d => {{
+                        const o = {{x: source.x, y: source.y}};
+                        return diagonal(o, o);
+                    }})
+                    .remove();
+
+                // Store the old positions for transition
+                nodes.forEach(d => {{
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                }});
+
+                // Creates a curved path from parent to child
+                function diagonal(s, d) {{
+                    return `M ${{s.y}} ${{s.x}}
+                            C ${{(s.y + d.y) / 2}} ${{s.x}},
+                              ${{(s.y + d.y) / 2}} ${{d.x}},
+                              ${{d.y}} ${{d.x}}`;
                 }}
 
-                const pathNode = mainDiv.append("div")
-                    .attr("class", "path-node");
+                // Toggle children on click
+                function click(event, d) {{
+                    if (d._children) {{
+                        // Expand: convert stored data to hierarchy nodes
+                        d.children = d._children.map ? d._children :
+                            d._children.map(c => {{
+                                const node = d3.hierarchy(c);
+                                node.parent = d;
+                                node.depth = d.depth + 1;
+                                return node;
+                            }});
 
-                pathNode.append("div")
-                    .attr("class", "label")
-                    .text(node.dimension || "Total");
-
-                pathNode.append("div")
-                    .attr("class", "value")
-                    .text(node.name);
-
-                pathNode.append("div")
-                    .attr("class", "label")
-                    .style("margin-top", "4px")
-                    .text(formatValue(node.value));
-            }});
-
-            // Add connector to columns if there are drilled items
-            if (pathNodes.length > 0 && columnsData.length > 0) {{
-                const connectorSvg = mainDiv.append("svg")
-                    .attr("width", 40)
-                    .attr("height", 60)
-                    .attr("class", "tree-svg");
-
-                connectorSvg.append("path")
-                    .attr("d", "M0,30 C20,30 20,30 40,30")
-                    .attr("class", "connector-line");
-            }}
-
-            // Render decomposition columns
-            columnsData.forEach((col, colIndex) => {{
-                const column = mainDiv.append("div")
-                    .attr("class", "column");
-
-                // Column header
-                const header = column.append("div")
-                    .attr("class", "column-header");
-
-                header.append("span")
-                    .text(col.dimension);
-
-                header.append("span")
-                    .attr("class", "clear-btn")
-                    .html("&times;")
-                    .on("click", () => sendClearAction(col.dimension));
-
-                // Find min/max for bar scaling
-                const values = col.items.map(d => d.value);
-                const maxVal = Math.max(...values);
-                const minVal = Math.min(...values);
-                const range = maxVal - minVal || 1;
-
-                // Render items (sorted descending for display)
-                const sortedItems = [...col.items].reverse();
-
-                sortedItems.forEach(item => {{
-                    const node = column.append("div")
-                        .attr("class", "node")
-                        .on("click", () => {{
-                            // Only first column is clickable for drill-down
-                            if (colIndex === 0) {{
-                                sendDrillAction(col.dimension, item.name);
+                        // If _children was raw data, convert it
+                        if (d.data._children && !d._children.map) {{
+                            d.children = d.data._children.map(childData => {{
+                                const child = d3.hierarchy(childData);
+                                child.parent = d;
+                                child.depth = d.depth + 1;
+                                // Process nested children
+                                if (childData._children) {{
+                                    child._children = childData._children;
+                                }}
+                                return child;
+                            }});
+                        }}
+                        d._children = null;
+                    }} else if (d.children) {{
+                        // Collapse
+                        d._children = d.children;
+                        d.children = null;
+                    }} else if (d.data._children) {{
+                        // First expansion from raw data
+                        d.children = d.data._children.map(childData => {{
+                            const child = d3.hierarchy(childData);
+                            child.parent = d;
+                            child.depth = d.depth + 1;
+                            if (childData._children) {{
+                                child._children = childData._children;
                             }}
+                            return child;
                         }});
-
-                    // Color bar indicator
-                    node.append("div")
-                        .attr("class", "node-bar")
-                        .style("background-color", item.color)
-                        .style("width", "6px");
-
-                    // Content
-                    const content = node.append("div")
-                        .attr("class", "node-content");
-
-                    content.append("div")
-                        .attr("class", "node-name")
-                        .text(item.name);
-
-                    content.append("div")
-                        .attr("class", "node-value")
-                        .text(formatValue(item.value));
-
-                    // Background bar
-                    const barBg = node.append("div")
-                        .attr("class", "node-bar-bg");
-
-                    const barWidth = ((item.value - minVal) / range) * 100;
-                    barBg.append("div")
-                        .attr("class", "node-bar-fill")
-                        .style("width", Math.max(5, barWidth) + "%")
-                        .style("background-color", item.color);
-                }});
-            }});
+                    }}
+                    update(d);
+                }}
+            }}
         </script>
     </body>
     </html>
@@ -513,21 +566,33 @@ def create_d3_decomposition_tree(df: pd.DataFrame, drill_path: List[Tuple[str, s
 
     return html
 
+
 # ============================================
-# SESSION STATE INITIALIZATION
+# DATA CONFIGURATION
 # ============================================
 
-if 'drill_path' not in st.session_state:
-    st.session_state.drill_path = []
+DATA_CONFIG = {
+    "metrics": {
+        "OTP": {"label": "On-Time Performance (%)"},
+        "Trips": {"label": "Total Trips"}
+    },
+    "dimensions": ["Division", "Depot", "Route", "Direction", "Period"]
+}
+
+# ============================================
+# SESSION STATE
+# ============================================
+
 if 'selected_metric' not in st.session_state:
     st.session_state.selected_metric = 'OTP'
+if 'selected_dimensions' not in st.session_state:
+    st.session_state.selected_dimensions = ["Division", "Depot", "Route", "Direction", "Period"]
 
 # ============================================
 # MAIN APP
 # ============================================
 
 def main():
-    # Load data
     df = generate_mock_data()
 
     # Sidebar
@@ -535,7 +600,7 @@ def main():
         st.header("Settings")
 
         selected_metric = st.selectbox(
-            "Select Metric",
+            "Metric",
             options=list(DATA_CONFIG["metrics"].keys()),
             format_func=lambda x: DATA_CONFIG["metrics"][x]["label"],
             index=list(DATA_CONFIG["metrics"].keys()).index(st.session_state.selected_metric)
@@ -543,124 +608,76 @@ def main():
         st.session_state.selected_metric = selected_metric
 
         st.markdown("---")
-        st.markdown("### Current Path")
 
-        if len(st.session_state.drill_path) == 0:
-            st.caption("Root level - no filters applied")
-        else:
-            for i, (dim, val) in enumerate(st.session_state.drill_path):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**{dim}:** {val}")
-                with col2:
-                    if st.button("×", key=f"remove_{i}", help=f"Remove {dim} filter"):
-                        st.session_state.drill_path = st.session_state.drill_path[:i]
-                        st.rerun()
+        st.markdown("### Dimension Order")
+        st.caption("Drag to reorder (use multiselect)")
 
-        st.markdown("---")
-        if st.button("Reset All Filters", use_container_width=True):
-            st.session_state.drill_path = []
-            st.rerun()
+        selected_dims = st.multiselect(
+            "Select dimensions to include",
+            options=DATA_CONFIG["dimensions"],
+            default=st.session_state.selected_dimensions,
+            help="Order matters - first dimension is the first level"
+        )
+
+        if selected_dims:
+            st.session_state.selected_dimensions = selected_dims
 
         st.markdown("---")
         st.markdown("### How to Use")
         st.markdown("""
-        1. **Click** on items in the first column to drill down
-        2. Use the **×** buttons to remove filters
-        3. The tree shows breakdowns by each dimension
+        - **Click** filled circles to expand/collapse
+        - **Hover** over nodes for details
+        - Blue circles have children to explore
+        - Bars show relative performance within each level
         """)
+
+        st.markdown("---")
+        st.markdown("### Legend")
+        cols = st.columns(2)
+        with cols[0]:
+            st.markdown("🟢 High")
+            st.markdown("🟡 Medium")
+        with cols[1]:
+            st.markdown("🟠 Low")
+            st.markdown("🔵 Root/Branch")
 
     # Header
     st.title("Decomposition Tree")
-    st.caption("Power BI-style drill-down analysis using D3.js")
+    st.caption("Click nodes to expand/collapse - Power BI style interactive drill-down")
 
-    # Drill down controls (since postMessage doesn't work without custom component registration)
-    available_dims = get_available_dimensions(st.session_state.drill_path)
+    # Build hierarchical data
+    if st.session_state.selected_dimensions:
+        tree_data = build_hierarchy(
+            df,
+            st.session_state.selected_dimensions,
+            selected_metric
+        )
 
-    if len(available_dims) > 0:
-        filtered_df = filter_data(df, st.session_state.drill_path)
+        # Create and display D3 visualization
+        html_content = create_d3_collapsible_tree(tree_data, selected_metric)
+        components.html(html_content, height=700, scrolling=True)
 
-        # Quick drill-down selector
-        col1, col2, col3 = st.columns([2, 2, 1])
+        # Summary stats
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+
+        if selected_metric == "OTP":
+            total_value = np.average(df['OTP'], weights=df['Trips'])
+            display_value = f"{total_value:.1f}%"
+        else:
+            total_value = df['Trips'].sum()
+            display_value = f"{total_value:,}"
 
         with col1:
-            next_dim = st.selectbox(
-                "Drill into dimension",
-                options=available_dims,
-                key="drill_dimension"
-            )
-
+            st.metric("Total Value", display_value)
         with col2:
-            # Get available values for selected dimension
-            dim_values = filtered_df[next_dim].unique().tolist()
-            selected_value = st.selectbox(
-                f"Select {next_dim}",
-                options=sorted(dim_values),
-                key="drill_value"
-            )
-
+            st.metric("Records", f"{len(df):,}")
         with col3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Drill Down", type="primary", use_container_width=True):
-                st.session_state.drill_path.append((next_dim, selected_value))
-                st.rerun()
-
-    st.markdown("---")
-
-    # Create and display D3 visualization
-    html_content = create_d3_decomposition_tree(df, st.session_state.drill_path, selected_metric)
-
-    # Calculate height based on data
-    filtered_df = filter_data(df, st.session_state.drill_path)
-    max_items = 0
-    for dim in available_dims[:5]:
-        num_items = filtered_df[dim].nunique()
-        max_items = max(max_items, num_items)
-
-    viz_height = max(400, max_items * 40 + 100)
-
-    components.html(html_content, height=viz_height, scrolling=True)
-
-    # Summary stats
-    st.markdown("---")
-
-    metric_config = DATA_CONFIG["metrics"][selected_metric]
-    filtered_df = filter_data(df, st.session_state.drill_path)
-
-    if selected_metric == "OTP":
-        current_value = np.average(filtered_df['OTP'], weights=filtered_df['Trips'])
-        total_value = np.average(df['OTP'], weights=df['Trips'])
-        display_value = f"{current_value:.1f}%"
+            st.metric("Dimensions", len(st.session_state.selected_dimensions))
+        with col4:
+            st.metric("Metric", selected_metric)
     else:
-        current_value = filtered_df[metric_config["column"]].sum()
-        total_value = df[metric_config["column"]].sum()
-        display_value = f"{current_value:,.0f}"
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("Current Value", display_value)
-    with col2:
-        st.metric("Drill Level", len(st.session_state.drill_path))
-    with col3:
-        st.metric("Records", f"{len(filtered_df):,}")
-    with col4:
-        pct_of_total = (len(filtered_df) / len(df) * 100)
-        st.metric("% of Records", f"{pct_of_total:.1f}%")
-
-    # Show detailed breakdown if at deep level
-    if len(st.session_state.drill_path) >= 3:
-        st.markdown("---")
-        st.markdown("### Detailed Data")
-
-        display_df = filtered_df.copy()
-        display_df['OTP'] = display_df['OTP'].apply(lambda x: f"{x:.1f}%")
-
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            height=300
-        )
+        st.warning("Please select at least one dimension in the sidebar.")
 
 if __name__ == "__main__":
     main()
