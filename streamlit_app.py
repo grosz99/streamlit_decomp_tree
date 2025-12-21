@@ -1,13 +1,15 @@
 """
 Decomposition Tree - Power BI Style
-A drill-down analysis tool with mock data for local testing
+Pure JavaScript/SVG implementation (no external dependencies)
+Fully compatible with Streamlit in Snowflake CSP restrictions
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
-import plotly.graph_objects as go
 import numpy as np
-from typing import Dict, List, Tuple
+import json
+from typing import Dict, List, Optional
 
 # Page config
 st.set_page_config(
@@ -16,439 +18,554 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for tree styling
-st.markdown("""
-<style>
-    .tree-container {
-        display: flex;
-        align-items: flex-start;
-        gap: 0;
-        overflow-x: auto;
-        padding: 20px 0;
-    }
-    .tree-node {
-        background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
-        color: white;
-        border-radius: 8px;
-        padding: 15px 20px;
-        min-width: 120px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .tree-node-value {
-        font-size: 1.4em;
-        font-weight: bold;
-    }
-    .tree-node-label {
-        font-size: 0.85em;
-        opacity: 0.9;
-    }
-    .tree-connector {
-        width: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #666;
-        font-size: 1.5em;
-    }
-    .dimension-header {
-        background-color: #f0f2f6;
-        padding: 8px 15px;
-        border-radius: 20px;
-        font-weight: 600;
-        margin-bottom: 10px;
-        display: inline-block;
-    }
-    .child-node {
-        background: #ffffff;
-        border: 2px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 12px 15px;
-        margin: 5px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-    .child-node:hover {
-        border-color: #1e3a5f;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    }
-    .child-node-selected {
-        background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
-        color: white;
-        border-color: #1e3a5f;
-    }
-    .percentage-bar {
-        height: 6px;
-        background: #e0e0e0;
-        border-radius: 3px;
-        margin-top: 8px;
-        overflow: hidden;
-    }
-    .percentage-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        border-radius: 3px;
-    }
-    .stButton > button {
-        width: 100%;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 # ============================================
-# MOCK DATA GENERATION
+# DATA GENERATION
 # ============================================
 
 @st.cache_data
 def generate_mock_data() -> pd.DataFrame:
-    """Generate realistic mock sales data"""
+    """Generate realistic mock transit data similar to Power BI example"""
     np.random.seed(42)
 
-    regions = ['North', 'South', 'East', 'West']
-    categories = ['Electronics', 'Clothing', 'Home & Garden', 'Sports', 'Food & Beverage']
-    channels = ['Online', 'Retail', 'Wholesale', 'Direct Sales']
-    products = {
-        'Electronics': ['Laptop', 'Smartphone', 'Tablet', 'Headphones', 'Smart Watch'],
-        'Clothing': ['T-Shirt', 'Jeans', 'Jacket', 'Sneakers', 'Dress'],
-        'Home & Garden': ['Furniture', 'Kitchenware', 'Garden Tools', 'Decor', 'Lighting'],
-        'Sports': ['Running Shoes', 'Yoga Mat', 'Weights', 'Bike', 'Tennis Racket'],
-        'Food & Beverage': ['Coffee', 'Snacks', 'Beverages', 'Organic Food', 'Supplements']
+    divisions = ['Brooklyn', 'Queens South', 'Staten Island', 'Bronx', 'Queens North', 'Manhattan']
+
+    depots = {
+        'Brooklyn': ['Jackie Gleason', 'Fresh Pond', 'East New York', 'Ulmer Park', 'Flatbush', 'Grand Avenue'],
+        'Queens South': ['Jamaica', 'JFK Depot', 'Rockaways'],
+        'Staten Island': ['Castleton', 'Charleston', 'Yukon'],
+        'Bronx': ['Gun Hill', 'Kingsbridge', 'West Farms'],
+        'Queens North': ['Casey Stengel', 'LaGuardia', 'College Point'],
+        'Manhattan': ['Mother Clara Hale', 'Manhattanville', 'Michael Quill']
     }
 
+    routes_by_division = {
+        'Brooklyn': ['B37', 'B68', 'B16', 'B11', 'B4', 'B43', 'B70', 'B8', 'B61', 'B63'],
+        'Queens South': ['Q1', 'Q2', 'Q3', 'Q5', 'Q6'],
+        'Staten Island': ['S40', 'S44', 'S46', 'S48', 'S52'],
+        'Bronx': ['Bx1', 'Bx2', 'Bx4', 'Bx5', 'Bx6'],
+        'Queens North': ['Q15', 'Q16', 'Q17', 'Q19', 'Q20'],
+        'Manhattan': ['M1', 'M2', 'M3', 'M4', 'M5']
+    }
+
+    directions = ['SB', 'NB']
+    periods = ['Overnight', 'Midday', 'PM', 'AM']
+
     data = []
-    for _ in range(1000):
-        region = np.random.choice(regions, p=[0.3, 0.25, 0.25, 0.2])
-        category = np.random.choice(categories, p=[0.35, 0.2, 0.15, 0.15, 0.15])
-        channel = np.random.choice(channels, p=[0.4, 0.3, 0.2, 0.1])
-        product = np.random.choice(products[category])
+    for _ in range(3000):
+        division = np.random.choice(divisions, p=[0.25, 0.18, 0.12, 0.15, 0.15, 0.15])
+        depot = np.random.choice(depots[division])
+        route = np.random.choice(routes_by_division[division])
+        direction = np.random.choice(directions, p=[0.52, 0.48])
+        period = np.random.choice(periods, p=[0.15, 0.30, 0.30, 0.25])
 
-        base_revenue = np.random.uniform(1000, 50000)
-        if region == 'North':
-            base_revenue *= 1.3
-        if category == 'Electronics':
-            base_revenue *= 1.5
-        if channel == 'Online':
-            base_revenue *= 1.2
+        base_otp = np.random.uniform(55, 78)
+        if division == 'Manhattan':
+            base_otp += 5
+        if period == 'Overnight':
+            base_otp -= 8
+        if period == 'AM':
+            base_otp += 3
 
-        revenue = base_revenue
-        cost = revenue * np.random.uniform(0.5, 0.75)
-        profit = revenue - cost
-        units = int(revenue / np.random.uniform(50, 500))
+        otp = min(max(base_otp + np.random.uniform(-5, 5), 50), 85)
 
         data.append({
-            'Region': region,
-            'Category': category,
-            'Channel': channel,
-            'Product': product,
-            'Revenue': round(revenue, 2),
-            'Cost': round(cost, 2),
-            'Profit': round(profit, 2),
-            'Units': units
+            'Division': division,
+            'Depot': depot,
+            'Route': route,
+            'Direction': direction,
+            'Period': period,
+            'OTP': round(otp, 1),
+            'Trips': np.random.randint(50, 500)
         })
 
     return pd.DataFrame(data)
 
+
 # ============================================
-# DATA CONFIGURATION
+# HIERARCHY BUILDING
+# ============================================
+
+def calculate_metric(df: pd.DataFrame, metric: str) -> float:
+    """Calculate metric value for a dataframe subset"""
+    if metric == "OTP":
+        if len(df) == 0 or df['Trips'].sum() == 0:
+            return 0.0
+        return round(float(np.average(df['OTP'], weights=df['Trips'])), 1)
+    else:
+        return int(df['Trips'].sum())
+
+
+def get_color(value: float, min_val: float, max_val: float) -> str:
+    """Get color based on value relative to min/max"""
+    if max_val == min_val:
+        normalized = 0.5
+    else:
+        normalized = (value - min_val) / (max_val - min_val)
+
+    if normalized >= 0.7:
+        return "#2E7D32"  # Green
+    elif normalized >= 0.5:
+        return "#8BC34A"  # Light green
+    elif normalized >= 0.3:
+        return "#FFC107"  # Yellow/Amber
+    else:
+        return "#FF9800"  # Orange
+
+
+def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dict:
+    """Build a nested hierarchical structure for the tree"""
+
+    def build_level(data: pd.DataFrame, dims_remaining: List[str]) -> List[Dict]:
+        if not dims_remaining or len(data) == 0:
+            return []
+
+        current_dim = dims_remaining[0]
+        next_dims = dims_remaining[1:]
+
+        groups = list(data.groupby(current_dim))
+        children = []
+
+        # Calculate values for color scaling
+        values = [calculate_metric(group, metric) for _, group in groups]
+        min_val = min(values) if values else 0
+        max_val = max(values) if values else 1
+
+        for (name, group), value in zip(groups, values):
+            node = {
+                "name": str(name),
+                "dimension": current_dim,
+                "value": value,
+                "color": get_color(value, min_val, max_val),
+                "count": len(group)
+            }
+
+            # Recursively build children
+            if next_dims:
+                node["children"] = build_level(group, next_dims)
+
+            children.append(node)
+
+        # Sort by value descending
+        children.sort(key=lambda x: x["value"], reverse=True)
+        return children
+
+    # Root node
+    root_value = calculate_metric(df, metric)
+    root = {
+        "name": "CJTP",
+        "dimension": "Total",
+        "value": root_value,
+        "color": "#1976D2",
+        "count": len(df),
+        "children": build_level(df, dimensions)
+    }
+
+    return root
+
+
+# ============================================
+# PURE JS/SVG VISUALIZATION (NO EXTERNAL DEPS)
+# ============================================
+
+def create_tree_visualization(tree_data: Dict, metric: str) -> str:
+    """Create pure JavaScript/SVG collapsible tree (Snowflake CSP compliant)"""
+
+    tree_json = json.dumps(tree_data)
+    format_type = "percent" if metric == "OTP" else "number"
+
+    html = f'''
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: "Segoe UI", Arial, sans-serif; background: #fff; }}
+.tree-container {{ padding: 20px; overflow: auto; }}
+svg {{ overflow: visible; }}
+.node {{ cursor: pointer; }}
+.node-circle {{ stroke-width: 2px; transition: all 0.2s; }}
+.node-circle:hover {{ stroke-width: 3px; }}
+.node-text {{ font-size: 12px; fill: #333; pointer-events: none; }}
+.node-value {{ font-size: 11px; fill: #666; pointer-events: none; }}
+.node-bar-bg {{ fill: #e0e0e0; }}
+.node-bar {{ transition: width 0.3s; }}
+.link {{ fill: none; stroke: #1976D2; stroke-opacity: 0.4; stroke-width: 1.5px; }}
+.tooltip {{
+    position: fixed; background: rgba(0,0,0,0.85); color: #fff;
+    padding: 8px 12px; border-radius: 4px; font-size: 12px;
+    pointer-events: none; z-index: 1000; display: none;
+    max-width: 200px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}}
+</style>
+</head>
+<body>
+<div class="tree-container">
+    <svg id="tree-svg"></svg>
+</div>
+<div id="tooltip" class="tooltip"></div>
+
+<script>
+(function() {{
+    "use strict";
+
+    const data = {tree_json};
+    const formatType = "{format_type}";
+
+    // Configuration
+    const config = {{
+        nodeWidth: 180,
+        nodeHeight: 50,
+        levelGap: 220,
+        siblingGap: 8,
+        barWidth: 60,
+        barHeight: 6,
+        duration: 300,
+        margin: {{ top: 40, right: 120, bottom: 40, left: 80 }}
+    }};
+
+    // State
+    let nodeId = 0;
+    let root = null;
+
+    // Utilities
+    function formatValue(val) {{
+        return formatType === "percent" ? val.toFixed(1) + "%" : val.toLocaleString();
+    }}
+
+    // Process tree data - add IDs and collapse state
+    function processNode(node, depth) {{
+        node.id = ++nodeId;
+        node.depth = depth;
+        node.expanded = depth < 1; // Expand only root initially
+
+        if (node.children && node.children.length > 0) {{
+            node.children.forEach(child => {{
+                child.parent = node;
+                processNode(child, depth + 1);
+            }});
+        }}
+        return node;
+    }}
+
+    // Calculate node positions using simple tree layout
+    function calculateLayout(node) {{
+        let yOffset = 0;
+
+        function layoutNode(n, x) {{
+            n.x = x;
+
+            if (n.expanded && n.children && n.children.length > 0) {{
+                const startY = yOffset;
+                n.children.forEach(child => {{
+                    layoutNode(child, x + config.levelGap);
+                }});
+                // Center parent among children
+                const firstChild = n.children[0];
+                const lastChild = n.children[n.children.length - 1];
+                n.y = (firstChild.y + lastChild.y) / 2;
+            }} else {{
+                n.y = yOffset;
+                yOffset += config.nodeHeight + config.siblingGap;
+            }}
+        }}
+
+        layoutNode(node, config.margin.left);
+        return yOffset;
+    }}
+
+    // Get all visible nodes
+    function getVisibleNodes(node, nodes) {{
+        nodes = nodes || [];
+        nodes.push(node);
+        if (node.expanded && node.children) {{
+            node.children.forEach(child => getVisibleNodes(child, nodes));
+        }}
+        return nodes;
+    }}
+
+    // Get all visible links
+    function getVisibleLinks(node, links) {{
+        links = links || [];
+        if (node.expanded && node.children) {{
+            node.children.forEach(child => {{
+                links.push({{ source: node, target: child }});
+                getVisibleLinks(child, links);
+            }});
+        }}
+        return links;
+    }}
+
+    // Create curved path between nodes
+    function linkPath(source, target) {{
+        const midX = (source.x + target.x) / 2;
+        return "M" + source.x + "," + source.y +
+               "C" + midX + "," + source.y +
+               " " + midX + "," + target.y +
+               " " + target.x + "," + target.y;
+    }}
+
+    // Render the tree
+    function render() {{
+        const height = calculateLayout(root);
+        const svg = document.getElementById("tree-svg");
+        const totalHeight = Math.max(400, height + config.margin.top + config.margin.bottom);
+        const totalWidth = 1200;
+
+        svg.setAttribute("width", totalWidth);
+        svg.setAttribute("height", totalHeight);
+        svg.innerHTML = "";
+
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", "translate(0," + config.margin.top + ")");
+        svg.appendChild(g);
+
+        const nodes = getVisibleNodes(root);
+        const links = getVisibleLinks(root);
+
+        // Draw links
+        links.forEach(link => {{
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("class", "link");
+            path.setAttribute("d", linkPath(link.source, link.target));
+            g.appendChild(path);
+        }});
+
+        // Draw nodes
+        nodes.forEach(node => {{
+            const nodeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            nodeGroup.setAttribute("class", "node");
+            nodeGroup.setAttribute("transform", "translate(" + node.x + "," + node.y + ")");
+
+            // Click handler for expand/collapse
+            if (node.children && node.children.length > 0) {{
+                nodeGroup.onclick = function(e) {{
+                    e.stopPropagation();
+                    node.expanded = !node.expanded;
+                    render();
+                }};
+            }}
+
+            // Tooltip handlers
+            nodeGroup.onmouseenter = function(e) {{
+                const tooltip = document.getElementById("tooltip");
+                tooltip.innerHTML = "<strong>" + node.name + "</strong><br>" +
+                                   node.dimension + "<br>" +
+                                   "Value: " + formatValue(node.value) + "<br>" +
+                                   "Records: " + (node.count ? node.count.toLocaleString() : "N/A");
+                tooltip.style.display = "block";
+                tooltip.style.left = (e.clientX + 15) + "px";
+                tooltip.style.top = (e.clientY - 10) + "px";
+            }};
+            nodeGroup.onmouseleave = function() {{
+                document.getElementById("tooltip").style.display = "none";
+            }};
+            nodeGroup.onmousemove = function(e) {{
+                const tooltip = document.getElementById("tooltip");
+                tooltip.style.left = (e.clientX + 15) + "px";
+                tooltip.style.top = (e.clientY - 10) + "px";
+            }};
+
+            // Color indicator bar
+            const indicator = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            indicator.setAttribute("x", -4);
+            indicator.setAttribute("y", -15);
+            indicator.setAttribute("width", 4);
+            indicator.setAttribute("height", 30);
+            indicator.setAttribute("rx", 2);
+            indicator.setAttribute("fill", node.color);
+            nodeGroup.appendChild(indicator);
+
+            // Circle
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("class", "node-circle");
+            circle.setAttribute("r", 7);
+            const hasChildren = node.children && node.children.length > 0;
+            circle.setAttribute("fill", hasChildren ? (node.expanded ? "#fff" : "#1976D2") : "#fff");
+            circle.setAttribute("stroke", node.color);
+            nodeGroup.appendChild(circle);
+
+            // Name label
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("class", "node-text");
+            text.setAttribute("x", 15);
+            text.setAttribute("y", -5);
+            text.textContent = node.name;
+            if (node.depth === 0) text.style.fontWeight = "bold";
+            nodeGroup.appendChild(text);
+
+            // Value label
+            const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            valueText.setAttribute("class", "node-value");
+            valueText.setAttribute("x", 15);
+            valueText.setAttribute("y", 10);
+            valueText.textContent = formatValue(node.value);
+            nodeGroup.appendChild(valueText);
+
+            // Bar background
+            const barBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            barBg.setAttribute("class", "node-bar-bg");
+            barBg.setAttribute("x", 15);
+            barBg.setAttribute("y", 16);
+            barBg.setAttribute("width", config.barWidth);
+            barBg.setAttribute("height", config.barHeight);
+            barBg.setAttribute("rx", 2);
+            nodeGroup.appendChild(barBg);
+
+            // Bar fill (relative to siblings)
+            const siblings = node.parent ? node.parent.children : [node];
+            const values = siblings.map(s => s.value);
+            const maxVal = Math.max(...values);
+            const minVal = Math.min(...values);
+            const range = maxVal - minVal || 1;
+            const barFillWidth = Math.max(4, ((node.value - minVal) / range) * config.barWidth);
+
+            const barFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            barFill.setAttribute("class", "node-bar");
+            barFill.setAttribute("x", 15);
+            barFill.setAttribute("y", 16);
+            barFill.setAttribute("width", barFillWidth);
+            barFill.setAttribute("height", config.barHeight);
+            barFill.setAttribute("rx", 2);
+            barFill.setAttribute("fill", node.color);
+            nodeGroup.appendChild(barFill);
+
+            // Expand/collapse indicator
+            if (hasChildren) {{
+                const indicator = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                indicator.setAttribute("x", 0);
+                indicator.setAttribute("y", 4);
+                indicator.setAttribute("text-anchor", "middle");
+                indicator.setAttribute("font-size", "10px");
+                indicator.setAttribute("fill", node.expanded ? "#1976D2" : "#fff");
+                indicator.setAttribute("pointer-events", "none");
+                indicator.textContent = node.expanded ? "−" : "+";
+                nodeGroup.appendChild(indicator);
+            }}
+
+            g.appendChild(nodeGroup);
+        }});
+    }}
+
+    // Initialize
+    root = processNode(data, 0);
+    render();
+}})();
+</script>
+</body>
+</html>
+'''
+    return html
+
+
+# ============================================
+# CONFIG
 # ============================================
 
 DATA_CONFIG = {
     "metrics": {
-        "Revenue": "Revenue",
-        "Profit": "Profit",
-        "Cost": "Cost",
-        "Units": "Units"
+        "OTP": {"label": "On-Time Performance (%)"},
+        "Trips": {"label": "Total Trips"}
     },
-    "dimensions": {
-        "Region": "Region",
-        "Category": "Category",
-        "Channel": "Channel",
-        "Product": "Product"
-    }
+    "dimensions": ["Division", "Depot", "Route", "Direction", "Period"]
 }
 
-# ============================================
-# HELPER FUNCTIONS
-# ============================================
-
-def filter_data(df: pd.DataFrame, drill_path: List[Tuple[str, str]]) -> pd.DataFrame:
-    """Filter dataframe based on drill path"""
-    filtered_df = df.copy()
-    for dimension, value in drill_path:
-        col = DATA_CONFIG["dimensions"][dimension]
-        filtered_df = filtered_df[filtered_df[col] == value]
-    return filtered_df
-
-def get_available_dimensions(drill_path: List[Tuple[str, str]]) -> List[str]:
-    """Get dimensions not yet drilled into"""
-    used_dimensions = {dim for dim, _ in drill_path}
-    return [dim for dim in DATA_CONFIG["dimensions"].keys() if dim not in used_dimensions]
-
-def calculate_decomposition(df: pd.DataFrame, dimension: str, metric: str) -> pd.DataFrame:
-    """Calculate decomposition breakdown for a dimension"""
-    col = DATA_CONFIG["dimensions"][dimension]
-    metric_col = DATA_CONFIG["metrics"][metric]
-
-    decomp = df.groupby(col)[metric_col].sum().reset_index()
-    decomp.columns = ['Value', 'MetricValue']
-    total = decomp['MetricValue'].sum()
-    decomp['Percentage'] = (decomp['MetricValue'] / total * 100).round(1)
-    decomp = decomp.sort_values('MetricValue', ascending=False)
-
-    return decomp
-
-def format_currency(value: float) -> str:
-    """Format number as currency"""
-    if value >= 1_000_000:
-        return f"${value/1_000_000:.1f}M"
-    elif value >= 1_000:
-        return f"${value/1_000:.1f}K"
-    else:
-        return f"${value:.0f}"
-
-def format_number(value: float) -> str:
-    """Format number with commas"""
-    if value >= 1_000_000:
-        return f"{value/1_000_000:.1f}M"
-    elif value >= 1_000:
-        return f"{value/1_000:.1f}K"
-    else:
-        return f"{value:,.0f}"
 
 # ============================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # ============================================
 
-if 'drill_path' not in st.session_state:
-    st.session_state.drill_path = []
 if 'selected_metric' not in st.session_state:
-    st.session_state.selected_metric = 'Revenue'
-if 'expanded_dimension' not in st.session_state:
-    st.session_state.expanded_dimension = None
+    st.session_state.selected_metric = 'OTP'
+if 'selected_dimensions' not in st.session_state:
+    st.session_state.selected_dimensions = DATA_CONFIG["dimensions"].copy()
+
 
 # ============================================
 # MAIN APP
 # ============================================
 
 def main():
-    # Load data
     df = generate_mock_data()
 
     # Sidebar
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.header("Settings")
+
         selected_metric = st.selectbox(
-            "Select Metric",
+            "Metric",
             options=list(DATA_CONFIG["metrics"].keys()),
+            format_func=lambda x: DATA_CONFIG["metrics"][x]["label"],
             index=list(DATA_CONFIG["metrics"].keys()).index(st.session_state.selected_metric)
         )
         st.session_state.selected_metric = selected_metric
 
         st.markdown("---")
-        st.markdown("### 📖 How to Use")
+
+        st.markdown("### Dimension Order")
+        selected_dims = st.multiselect(
+            "Select and order dimensions",
+            options=DATA_CONFIG["dimensions"],
+            default=st.session_state.selected_dimensions,
+            help="Order determines hierarchy depth"
+        )
+
+        if selected_dims:
+            st.session_state.selected_dimensions = selected_dims
+
+        st.markdown("---")
+        st.markdown("### How to Use")
         st.markdown("""
-        1. Click a **dimension** to expand it
-        2. Click a **value** to drill down
-        3. Use the **tree path** to navigate back
+        - **Click** nodes with **+** to expand
+        - **Click** nodes with **−** to collapse
+        - **Hover** for detailed tooltips
+        - Blue filled = has children
+        - White filled = expanded or leaf
         """)
 
         st.markdown("---")
-        if st.button("🔄 Reset Tree", use_container_width=True):
-            st.session_state.drill_path = []
-            st.session_state.expanded_dimension = None
-            st.rerun()
+        st.markdown("### Performance Legend")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("🟢 High")
+            st.markdown("🟡 Medium")
+        with col2:
+            st.markdown("🟠 Low")
+            st.markdown("🔵 Root")
 
     # Header
-    st.title("🌳 Decomposition Tree")
+    st.title("Decomposition Tree")
+    st.caption("Interactive drill-down analysis - Click nodes to expand/collapse")
 
-    # Filter data based on drill path
-    filtered_df = filter_data(df, st.session_state.drill_path)
-    metric_col = DATA_CONFIG["metrics"][selected_metric]
-    total_value = filtered_df[metric_col].sum()
-    available_dims = get_available_dimensions(st.session_state.drill_path)
-
-    # ============================================
-    # TREE VISUALIZATION
-    # ============================================
-
-    # Build the tree path display
-    st.markdown("---")
-
-    # Create columns for the tree structure
-    tree_levels = len(st.session_state.drill_path) + 1  # +1 for root
-
-    # Display tree horizontally
-    cols = st.columns([1] * min(tree_levels * 2 - 1, 9))  # Limit columns
-
-    col_idx = 0
-
-    # Root node (Total metric)
-    with cols[col_idx]:
-        st.markdown(f"""
-        <div class="tree-node">
-            <div class="tree-node-label">{selected_metric}</div>
-            <div class="tree-node-value">{format_currency(total_value) if selected_metric != 'Units' else format_number(total_value)}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # If at root level, show reset is already at root
-        if len(st.session_state.drill_path) == 0:
-            st.caption("📍 Root Level")
-
-    col_idx += 1
-
-    # Show drilled path
-    for i, (dim, val) in enumerate(st.session_state.drill_path):
-        if col_idx < len(cols):
-            # Connector
-            with cols[col_idx]:
-                st.markdown("<div style='text-align:center; padding-top:20px; color:#666;'>→</div>", unsafe_allow_html=True)
-            col_idx += 1
-
-        if col_idx < len(cols):
-            # Node
-            with cols[col_idx]:
-                # Calculate value at this level
-                path_up_to = st.session_state.drill_path[:i+1]
-                level_df = filter_data(df, path_up_to)
-                level_value = level_df[metric_col].sum()
-
-                st.markdown(f"""
-                <div class="tree-node">
-                    <div class="tree-node-label">{dim}</div>
-                    <div class="tree-node-value">{val}</div>
-                    <div class="tree-node-label" style="margin-top:5px;">{format_currency(level_value) if selected_metric != 'Units' else format_number(level_value)}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Button to go back to this level
-                if st.button("↩️ Back here", key=f"back_{i}", use_container_width=True):
-                    st.session_state.drill_path = st.session_state.drill_path[:i+1]
-                    st.session_state.expanded_dimension = None
-                    st.rerun()
-
-            col_idx += 1
-
-    st.markdown("---")
-
-    # ============================================
-    # DIMENSION SELECTION (Tree branches)
-    # ============================================
-
-    if len(available_dims) > 0:
-        st.markdown("### 📊 Choose a dimension to explore")
-
-        # Show dimensions as expandable cards
-        dim_cols = st.columns(len(available_dims))
-
-        for i, dimension in enumerate(available_dims):
-            with dim_cols[i]:
-                decomp_df = calculate_decomposition(filtered_df, dimension, selected_metric)
-                top_value = decomp_df.iloc[0]['Value'] if len(decomp_df) > 0 else "N/A"
-                top_pct = decomp_df.iloc[0]['Percentage'] if len(decomp_df) > 0 else 0
-
-                # Dimension card as expander
-                is_expanded = st.session_state.expanded_dimension == dimension
-
-                # Create a button that looks like a card
-                button_label = f"📁 {dimension}\nTop: {top_value} ({top_pct}%)"
-                if st.button(button_label, key=f"dim_{dimension}", use_container_width=True,
-                           type="primary" if is_expanded else "secondary"):
-                    if is_expanded:
-                        st.session_state.expanded_dimension = None
-                    else:
-                        st.session_state.expanded_dimension = dimension
-                    st.rerun()
-
-        st.markdown("---")
-
-        # Show expanded dimension details
-        if st.session_state.expanded_dimension:
-            dimension = st.session_state.expanded_dimension
-            decomp_df = calculate_decomposition(filtered_df, dimension, selected_metric)
-
-            st.markdown(f"### 🔍 {dimension} Breakdown")
-            st.caption(f"Click any value below to drill into it")
-
-            # Create a horizontal bar chart
-            fig = go.Figure()
-
-            fig.add_trace(go.Bar(
-                y=decomp_df['Value'],
-                x=decomp_df['MetricValue'],
-                orientation='h',
-                marker=dict(
-                    color=decomp_df['MetricValue'],
-                    colorscale='Blues',
-                    showscale=False
-                ),
-                text=[f"{format_currency(v) if selected_metric != 'Units' else format_number(v)} ({p}%)"
-                      for v, p in zip(decomp_df['MetricValue'], decomp_df['Percentage'])],
-                textposition='auto',
-                hovertemplate=f"<b>%{{y}}</b><br>{selected_metric}: %{{x:,.0f}}<extra></extra>"
-            ))
-
-            fig.update_layout(
-                xaxis_title=selected_metric,
-                yaxis_title="",
-                height=max(250, len(decomp_df) * 45),
-                showlegend=False,
-                yaxis=dict(categoryorder='total ascending'),
-                margin=dict(l=20, r=20, t=10, b=40)
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Drill buttons as clickable cards
-            st.markdown("**🖱️ Click to drill into:**")
-
-            # Arrange buttons in rows
-            num_cols = min(len(decomp_df), 4)
-            rows = (len(decomp_df) + num_cols - 1) // num_cols
-
-            for row_idx in range(rows):
-                button_cols = st.columns(num_cols)
-                for col_idx in range(num_cols):
-                    item_idx = row_idx * num_cols + col_idx
-                    if item_idx < len(decomp_df):
-                        row = decomp_df.iloc[item_idx]
-                        with button_cols[col_idx]:
-                            value_display = format_currency(row['MetricValue']) if selected_metric != 'Units' else format_number(row['MetricValue'])
-                            btn_label = f"{row['Value']}\n{value_display} ({row['Percentage']}%)"
-
-                            if st.button(btn_label, key=f"drill_{dimension}_{row['Value']}", use_container_width=True):
-                                st.session_state.drill_path.append((dimension, row['Value']))
-                                st.session_state.expanded_dimension = None
-                                st.rerun()
-
-    else:
-        # Deepest level reached
-        st.success("🎯 You've reached the deepest drill level!")
-
-        st.markdown("### 📋 Detailed Data at This Level")
-        st.dataframe(
-            filtered_df.style.format({
-                'Revenue': '${:,.2f}',
-                'Cost': '${:,.2f}',
-                'Profit': '${:,.2f}',
-                'Units': '{:,.0f}'
-            }),
-            use_container_width=True,
-            height=400
+    # Build and display tree
+    if st.session_state.selected_dimensions:
+        tree_data = build_hierarchy(
+            df,
+            st.session_state.selected_dimensions,
+            selected_metric
         )
 
-    # Footer with summary
-    st.markdown("---")
-    summary_cols = st.columns(4)
-    with summary_cols[0]:
-        st.metric("Current Level", len(st.session_state.drill_path))
-    with summary_cols[1]:
-        st.metric("Records", f"{len(filtered_df):,}")
-    with summary_cols[2]:
-        st.metric("Dimensions Left", len(available_dims))
-    with summary_cols[3]:
-        pct_of_total = (total_value / df[metric_col].sum() * 100)
-        st.metric("% of Total", f"{pct_of_total:.1f}%")
+        html_content = create_tree_visualization(tree_data, selected_metric)
+        components.html(html_content, height=700, scrolling=True)
+
+        # Summary
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+
+        total_value = calculate_metric(df, selected_metric)
+        display_value = f"{total_value:.1f}%" if selected_metric == "OTP" else f"{total_value:,}"
+
+        with col1:
+            st.metric("Total Value", display_value)
+        with col2:
+            st.metric("Records", f"{len(df):,}")
+        with col3:
+            st.metric("Dimensions", len(st.session_state.selected_dimensions))
+        with col4:
+            st.metric("Metric", selected_metric)
+    else:
+        st.warning("Please select at least one dimension.")
+
 
 if __name__ == "__main__":
     main()
