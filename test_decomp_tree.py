@@ -138,47 +138,47 @@ class TestCalculateMetric:
 # ============================================
 
 class TestGetColor:
-    """Tests for get_color function"""
+    """Tests for get_color function - Surge/Beacon color palette"""
 
     def test_high_value_green(self):
-        """High values (>70% normalized) should be green"""
+        """High values (>70% normalized) should be primary green"""
         result = get_color(90, 0, 100)
-        assert result == "#2E7D32"
+        assert result == "#1B5E3F"  # Surge primary green
 
     def test_medium_high_light_green(self):
-        """Medium-high values (50-70%) should be light green"""
+        """Medium-high values (50-70%) should be medium green"""
         result = get_color(60, 0, 100)
-        assert result == "#8BC34A"
+        assert result == "#2D8B5E"  # Surge medium green
 
     def test_medium_low_yellow(self):
-        """Medium-low values (30-50%) should be yellow"""
+        """Medium-low values (30-50%) should be amber"""
         result = get_color(40, 0, 100)
-        assert result == "#FFC107"
+        assert result == "#F59E0B"  # Amber warning
 
-    def test_low_value_orange(self):
-        """Low values (<30%) should be orange"""
+    def test_low_value_red(self):
+        """Low values (<30%) should be red"""
         result = get_color(20, 0, 100)
-        assert result == "#FF9800"
+        assert result == "#DC2626"  # Red for low
 
     def test_equal_min_max(self):
         """When min equals max, should return middle color"""
         result = get_color(50, 50, 50)
-        assert result == "#8BC34A"  # 0.5 normalized → light green
+        assert result == "#2D8B5E"  # 0.5 normalized → medium green
 
     def test_boundary_70_percent(self):
         """Test exact 70% boundary"""
         result = get_color(70, 0, 100)
-        assert result == "#2E7D32"
+        assert result == "#1B5E3F"  # Primary green
 
     def test_boundary_50_percent(self):
         """Test exact 50% boundary"""
         result = get_color(50, 0, 100)
-        assert result == "#8BC34A"
+        assert result == "#2D8B5E"  # Medium green
 
     def test_boundary_30_percent(self):
         """Test exact 30% boundary"""
         result = get_color(30, 0, 100)
-        assert result == "#FFC107"
+        assert result == "#F59E0B"  # Amber
 
 
 # ============================================
@@ -199,8 +199,8 @@ class TestBuildHierarchy:
         assert "count" in result
         assert "children" in result
 
-        assert result["name"] == "CJTP"
-        assert result["dimension"] == "Total"
+        assert result["name"] == "Total"
+        assert result["dimension"] == "All Data"
         assert result["count"] == 5
 
     def test_single_dimension_children(self, sample_df):
@@ -230,7 +230,7 @@ class TestBuildHierarchy:
         """Empty dimensions list should return root with no children"""
         result = build_hierarchy(sample_df, [], "OTP")
 
-        assert result["name"] == "CJTP"
+        assert result["name"] == "Total"
         assert result["children"] == []
 
     def test_child_counts(self, sample_df):
@@ -310,7 +310,7 @@ class TestCreateTreeVisualization:
         result = create_tree_visualization(tree_data, "OTP")
 
         # Data should be embedded
-        assert "CJTP" in result
+        assert "Total" in result
         assert "Brooklyn" in result
 
     def test_percent_format_type(self, sample_df):
@@ -411,7 +411,7 @@ class TestIntegration:
         # Verify output
         assert isinstance(html, str)
         assert len(html) > 1000  # Should be substantial
-        assert "CJTP" in html
+        assert "Total" in html
 
     def test_all_dimensions(self, sample_df):
         """Test with all dimensions"""
@@ -434,7 +434,7 @@ class TestIntegration:
 
         # Should round-trip
         parsed = json.loads(json_str)
-        assert parsed["name"] == "CJTP"
+        assert parsed["name"] == "Total"
 
 
 # ============================================

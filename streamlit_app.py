@@ -2,6 +2,7 @@
 Decomposition Tree - Power BI Style
 Pure JavaScript/SVG implementation (no external dependencies)
 Fully compatible with Streamlit in Snowflake CSP restrictions
+Styled to match Surge/Beacon design system
 """
 
 import streamlit as st
@@ -13,10 +14,161 @@ from typing import Dict, List, Optional
 
 # Page config
 st.set_page_config(
-    page_title="Decomposition Tree",
-    page_icon="🌳",
-    layout="wide"
+    page_title="Revenue Tree",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# ============================================
+# CUSTOM CSS - SURGE/BEACON DESIGN SYSTEM
+# ============================================
+
+st.markdown("""
+<style>
+    /* Import clean font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* Global styles */
+    .stApp {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    /* Header styling */
+    h1 {
+        color: #1B5E3F !important;
+        font-weight: 700 !important;
+        font-size: 1.75rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+
+    /* Subheader */
+    .subtitle {
+        color: #6B7280;
+        font-size: 0.95rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background-color: #F9FAFB;
+        border-right: 1px solid #E5E7EB;
+    }
+
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #1B5E3F !important;
+    }
+
+    /* Card styling for metrics */
+    [data-testid="stMetric"] {
+        background-color: white;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: #6B7280 !important;
+        font-size: 0.85rem !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #1B5E3F !important;
+        font-weight: 600 !important;
+    }
+
+    /* Button styling */
+    .stButton > button {
+        background-color: #1B5E3F;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+        transition: background-color 0.2s;
+    }
+
+    .stButton > button:hover {
+        background-color: #154a32;
+        color: white;
+    }
+
+    /* Selectbox styling */
+    .stSelectbox > div > div {
+        border-radius: 8px;
+        border-color: #E5E7EB;
+    }
+
+    /* Multiselect styling */
+    .stMultiSelect > div > div {
+        border-radius: 8px;
+        border-color: #E5E7EB;
+    }
+
+    /* Divider */
+    hr {
+        border-color: #E5E7EB;
+        margin: 1.5rem 0;
+    }
+
+    /* Category badge styling */
+    .category-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        background-color: #E8F5EE;
+        color: #1B5E3F;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+    }
+
+    /* Info box */
+    .info-box {
+        background-color: #F9FAFB;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+
+    .info-box h4 {
+        color: #1B5E3F;
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    .info-box p, .info-box li {
+        color: #6B7280;
+        font-size: 0.85rem;
+        margin: 0.25rem 0;
+    }
+
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Legend items */
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.25rem 0;
+        font-size: 0.85rem;
+        color: #4B5563;
+    }
+
+    .legend-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 # ============================================
@@ -97,20 +249,20 @@ def calculate_metric(df: pd.DataFrame, metric: str) -> float:
 
 
 def get_color(value: float, min_val: float, max_val: float) -> str:
-    """Get color based on value relative to min/max"""
+    """Get color based on value relative to min/max - using Surge green palette"""
     if max_val == min_val:
         normalized = 0.5
     else:
         normalized = (value - min_val) / (max_val - min_val)
 
     if normalized >= 0.7:
-        return "#2E7D32"  # Green
+        return "#1B5E3F"  # Primary green (high)
     elif normalized >= 0.5:
-        return "#8BC34A"  # Light green
+        return "#2D8B5E"  # Medium green
     elif normalized >= 0.3:
-        return "#FFC107"  # Yellow/Amber
+        return "#F59E0B"  # Amber (warning)
     else:
-        return "#FF9800"  # Orange
+        return "#DC2626"  # Red (low)
 
 
 def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dict:
@@ -126,7 +278,6 @@ def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dic
         groups = list(data.groupby(current_dim))
         children = []
 
-        # Calculate values for color scaling
         values = [calculate_metric(group, metric) for _, group in groups]
         min_val = min(values) if values else 0
         max_val = max(values) if values else 1
@@ -140,23 +291,20 @@ def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dic
                 "count": len(group)
             }
 
-            # Recursively build children
             if next_dims:
                 node["children"] = build_level(group, next_dims)
 
             children.append(node)
 
-        # Sort by value descending
         children.sort(key=lambda x: x["value"], reverse=True)
         return children
 
-    # Root node
     root_value = calculate_metric(df, metric)
     root = {
-        "name": "CJTP",
-        "dimension": "Total",
+        "name": "Total",
+        "dimension": "All Data",
         "value": root_value,
-        "color": "#1976D2",
+        "color": "#1B5E3F",
         "count": len(df),
         "children": build_level(df, dimensions)
     }
@@ -165,11 +313,11 @@ def build_hierarchy(df: pd.DataFrame, dimensions: List[str], metric: str) -> Dic
 
 
 # ============================================
-# PURE JS/SVG VISUALIZATION (NO EXTERNAL DEPS)
+# VISUALIZATION - SURGE/BEACON THEMED
 # ============================================
 
 def create_tree_visualization(tree_data: Dict, metric: str) -> str:
-    """Create pure JavaScript/SVG collapsible tree (Snowflake CSP compliant)"""
+    """Create pure JavaScript/SVG collapsible tree with Surge/Beacon styling"""
 
     tree_json = json.dumps(tree_data)
     format_type = "percent" if metric == "OTP" else "number"
@@ -179,23 +327,135 @@ def create_tree_visualization(tree_data: Dict, metric: str) -> str:
 <html>
 <head>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-body {{ font-family: "Segoe UI", Arial, sans-serif; background: #fff; }}
-.tree-container {{ padding: 20px; overflow: auto; }}
+
+body {{
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #FFFFFF;
+    color: #1F2937;
+}}
+
+.tree-container {{
+    padding: 24px;
+    background: #FFFFFF;
+    border-radius: 12px;
+    border: 1px solid #E5E7EB;
+    margin: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}}
+
 svg {{ overflow: visible; }}
+
 .node {{ cursor: pointer; }}
-.node-circle {{ stroke-width: 2px; transition: all 0.2s; }}
-.node-circle:hover {{ stroke-width: 3px; }}
-.node-text {{ font-size: 12px; fill: #333; pointer-events: none; }}
-.node-value {{ font-size: 11px; fill: #666; pointer-events: none; }}
-.node-bar-bg {{ fill: #e0e0e0; }}
-.node-bar {{ transition: width 0.3s; }}
-.link {{ fill: none; stroke: #1976D2; stroke-opacity: 0.4; stroke-width: 1.5px; }}
+
+.node-rect {{
+    fill: #FFFFFF;
+    stroke: #E5E7EB;
+    stroke-width: 1px;
+    rx: 8px;
+    transition: all 0.2s;
+}}
+
+.node:hover .node-rect {{
+    stroke: #1B5E3F;
+    stroke-width: 2px;
+    filter: drop-shadow(0 2px 4px rgba(27, 94, 63, 0.1));
+}}
+
+.node-circle {{
+    stroke-width: 2px;
+    transition: all 0.2s;
+}}
+
+.node-text {{
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    fill: #1F2937;
+    pointer-events: none;
+}}
+
+.node-value {{
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    fill: #1B5E3F;
+    pointer-events: none;
+}}
+
+.node-dimension {{
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 500;
+    fill: #9CA3AF;
+    pointer-events: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}}
+
+.node-bar-bg {{
+    fill: #F3F4F6;
+    rx: 3px;
+}}
+
+.node-bar {{
+    rx: 3px;
+    transition: width 0.3s;
+}}
+
+.link {{
+    fill: none;
+    stroke: #D1D5DB;
+    stroke-width: 1.5px;
+}}
+
+.link-active {{
+    stroke: #1B5E3F;
+    stroke-opacity: 0.6;
+}}
+
 .tooltip {{
-    position: fixed; background: rgba(0,0,0,0.85); color: #fff;
-    padding: 8px 12px; border-radius: 4px; font-size: 12px;
-    pointer-events: none; z-index: 1000; display: none;
-    max-width: 200px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    position: fixed;
+    background: #1F2937;
+    color: #FFFFFF;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: 'Inter', sans-serif;
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
+    max-width: 220px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    line-height: 1.5;
+}}
+
+.tooltip strong {{
+    color: #FFFFFF;
+    font-weight: 600;
+}}
+
+.tooltip .label {{
+    color: #9CA3AF;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 8px;
+    display: block;
+}}
+
+.tooltip .value {{
+    color: #10B981;
+    font-weight: 600;
+}}
+
+.expand-icon {{
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    pointer-events: none;
 }}
 </style>
 </head>
@@ -212,32 +472,27 @@ svg {{ overflow: visible; }}
     const data = {tree_json};
     const formatType = "{format_type}";
 
-    // Configuration
     const config = {{
-        nodeWidth: 180,
-        nodeHeight: 50,
-        levelGap: 220,
-        siblingGap: 8,
-        barWidth: 60,
+        nodeWidth: 160,
+        nodeHeight: 65,
+        levelGap: 200,
+        siblingGap: 12,
+        barWidth: 80,
         barHeight: 6,
-        duration: 300,
-        margin: {{ top: 40, right: 120, bottom: 40, left: 80 }}
+        margin: {{ top: 40, right: 160, bottom: 40, left: 60 }}
     }};
 
-    // State
     let nodeId = 0;
     let root = null;
 
-    // Utilities
     function formatValue(val) {{
         return formatType === "percent" ? val.toFixed(1) + "%" : val.toLocaleString();
     }}
 
-    // Process tree data - add IDs and collapse state
     function processNode(node, depth) {{
         node.id = ++nodeId;
         node.depth = depth;
-        node.expanded = depth < 1; // Expand only root initially
+        node.expanded = depth < 1;
 
         if (node.children && node.children.length > 0) {{
             node.children.forEach(child => {{
@@ -248,7 +503,6 @@ svg {{ overflow: visible; }}
         return node;
     }}
 
-    // Calculate node positions using simple tree layout
     function calculateLayout(node) {{
         let yOffset = 0;
 
@@ -256,11 +510,9 @@ svg {{ overflow: visible; }}
             n.x = x;
 
             if (n.expanded && n.children && n.children.length > 0) {{
-                const startY = yOffset;
                 n.children.forEach(child => {{
                     layoutNode(child, x + config.levelGap);
                 }});
-                // Center parent among children
                 const firstChild = n.children[0];
                 const lastChild = n.children[n.children.length - 1];
                 n.y = (firstChild.y + lastChild.y) / 2;
@@ -274,7 +526,6 @@ svg {{ overflow: visible; }}
         return yOffset;
     }}
 
-    // Get all visible nodes
     function getVisibleNodes(node, nodes) {{
         nodes = nodes || [];
         nodes.push(node);
@@ -284,7 +535,6 @@ svg {{ overflow: visible; }}
         return nodes;
     }}
 
-    // Get all visible links
     function getVisibleLinks(node, links) {{
         links = links || [];
         if (node.expanded && node.children) {{
@@ -296,28 +546,28 @@ svg {{ overflow: visible; }}
         return links;
     }}
 
-    // Create curved path between nodes
     function linkPath(source, target) {{
-        const midX = (source.x + target.x) / 2;
-        return "M" + source.x + "," + source.y +
-               "C" + midX + "," + source.y +
-               " " + midX + "," + target.y +
-               " " + target.x + "," + target.y;
+        const midX = (source.x + config.nodeWidth/2 + target.x) / 2;
+        const sy = source.y + config.nodeHeight/2;
+        const ty = target.y + config.nodeHeight/2;
+        const sx = source.x + config.nodeWidth;
+        const tx = target.x;
+
+        return `M${{sx}},${{sy}} C${{midX}},${{sy}} ${{midX}},${{ty}} ${{tx}},${{ty}}`;
     }}
 
-    // Render the tree
     function render() {{
         const height = calculateLayout(root);
         const svg = document.getElementById("tree-svg");
         const totalHeight = Math.max(400, height + config.margin.top + config.margin.bottom);
-        const totalWidth = 1200;
+        const totalWidth = 1100;
 
         svg.setAttribute("width", totalWidth);
         svg.setAttribute("height", totalHeight);
         svg.innerHTML = "";
 
         const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        g.setAttribute("transform", "translate(0," + config.margin.top + ")");
+        g.setAttribute("transform", `translate(0,${{config.margin.top}})`);
         svg.appendChild(g);
 
         const nodes = getVisibleNodes(root);
@@ -335,24 +585,32 @@ svg {{ overflow: visible; }}
         nodes.forEach(node => {{
             const nodeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
             nodeGroup.setAttribute("class", "node");
-            nodeGroup.setAttribute("transform", "translate(" + node.x + "," + node.y + ")");
+            nodeGroup.setAttribute("transform", `translate(${{node.x}},${{node.y}})`);
 
-            // Click handler for expand/collapse
-            if (node.children && node.children.length > 0) {{
+            const hasChildren = node.children && node.children.length > 0;
+
+            if (hasChildren) {{
                 nodeGroup.onclick = function(e) {{
                     e.stopPropagation();
                     node.expanded = !node.expanded;
                     render();
                 }};
+                nodeGroup.style.cursor = "pointer";
+            }} else {{
+                nodeGroup.style.cursor = "default";
             }}
 
-            // Tooltip handlers
+            // Tooltip
             nodeGroup.onmouseenter = function(e) {{
                 const tooltip = document.getElementById("tooltip");
-                tooltip.innerHTML = "<strong>" + node.name + "</strong><br>" +
-                                   node.dimension + "<br>" +
-                                   "Value: " + formatValue(node.value) + "<br>" +
-                                   "Records: " + (node.count ? node.count.toLocaleString() : "N/A");
+                tooltip.innerHTML = `
+                    <strong>${{node.name}}</strong>
+                    <span class="label">${{node.dimension}}</span>
+                    <span class="label">Value</span>
+                    <span class="value">${{formatValue(node.value)}}</span>
+                    <span class="label">Records</span>
+                    ${{node.count ? node.count.toLocaleString() : 'N/A'}}
+                `;
                 tooltip.style.display = "block";
                 tooltip.style.left = (e.clientX + 15) + "px";
                 tooltip.style.top = (e.clientY - 10) + "px";
@@ -366,53 +624,58 @@ svg {{ overflow: visible; }}
                 tooltip.style.top = (e.clientY - 10) + "px";
             }};
 
-            // Color indicator bar
+            // Card background
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("class", "node-rect");
+            rect.setAttribute("width", config.nodeWidth);
+            rect.setAttribute("height", config.nodeHeight);
+            rect.setAttribute("rx", 8);
+            nodeGroup.appendChild(rect);
+
+            // Color indicator (left edge)
             const indicator = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            indicator.setAttribute("x", -4);
-            indicator.setAttribute("y", -15);
+            indicator.setAttribute("x", 0);
+            indicator.setAttribute("y", 0);
             indicator.setAttribute("width", 4);
-            indicator.setAttribute("height", 30);
-            indicator.setAttribute("rx", 2);
+            indicator.setAttribute("height", config.nodeHeight);
+            indicator.setAttribute("rx", "4 0 0 4");
             indicator.setAttribute("fill", node.color);
             nodeGroup.appendChild(indicator);
 
-            // Circle
-            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            circle.setAttribute("class", "node-circle");
-            circle.setAttribute("r", 7);
-            const hasChildren = node.children && node.children.length > 0;
-            circle.setAttribute("fill", hasChildren ? (node.expanded ? "#fff" : "#1976D2") : "#fff");
-            circle.setAttribute("stroke", node.color);
-            nodeGroup.appendChild(circle);
+            // Dimension label
+            const dimText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            dimText.setAttribute("class", "node-dimension");
+            dimText.setAttribute("x", 14);
+            dimText.setAttribute("y", 16);
+            dimText.textContent = node.dimension;
+            nodeGroup.appendChild(dimText);
 
-            // Name label
-            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            text.setAttribute("class", "node-text");
-            text.setAttribute("x", 15);
-            text.setAttribute("y", -5);
-            text.textContent = node.name;
-            if (node.depth === 0) text.style.fontWeight = "bold";
-            nodeGroup.appendChild(text);
+            // Name
+            const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            nameText.setAttribute("class", "node-text");
+            nameText.setAttribute("x", 14);
+            nameText.setAttribute("y", 32);
+            nameText.textContent = node.name.length > 16 ? node.name.substring(0, 14) + "..." : node.name;
+            nodeGroup.appendChild(nameText);
 
-            // Value label
+            // Value
             const valueText = document.createElementNS("http://www.w3.org/2000/svg", "text");
             valueText.setAttribute("class", "node-value");
-            valueText.setAttribute("x", 15);
-            valueText.setAttribute("y", 10);
+            valueText.setAttribute("x", 14);
+            valueText.setAttribute("y", 48);
             valueText.textContent = formatValue(node.value);
             nodeGroup.appendChild(valueText);
 
             // Bar background
             const barBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             barBg.setAttribute("class", "node-bar-bg");
-            barBg.setAttribute("x", 15);
-            barBg.setAttribute("y", 16);
+            barBg.setAttribute("x", 14);
+            barBg.setAttribute("y", 54);
             barBg.setAttribute("width", config.barWidth);
             barBg.setAttribute("height", config.barHeight);
-            barBg.setAttribute("rx", 2);
             nodeGroup.appendChild(barBg);
 
-            // Bar fill (relative to siblings)
+            // Bar fill
             const siblings = node.parent ? node.parent.children : [node];
             const values = siblings.map(s => s.value);
             const maxVal = Math.max(...values);
@@ -422,32 +685,41 @@ svg {{ overflow: visible; }}
 
             const barFill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             barFill.setAttribute("class", "node-bar");
-            barFill.setAttribute("x", 15);
-            barFill.setAttribute("y", 16);
+            barFill.setAttribute("x", 14);
+            barFill.setAttribute("y", 54);
             barFill.setAttribute("width", barFillWidth);
             barFill.setAttribute("height", config.barHeight);
-            barFill.setAttribute("rx", 2);
             barFill.setAttribute("fill", node.color);
             nodeGroup.appendChild(barFill);
 
-            // Expand/collapse indicator
+            // Expand/collapse button
             if (hasChildren) {{
-                const indicator = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                indicator.setAttribute("x", 0);
-                indicator.setAttribute("y", 4);
-                indicator.setAttribute("text-anchor", "middle");
-                indicator.setAttribute("font-size", "10px");
-                indicator.setAttribute("fill", node.expanded ? "#1976D2" : "#fff");
-                indicator.setAttribute("pointer-events", "none");
-                indicator.textContent = node.expanded ? "−" : "+";
-                nodeGroup.appendChild(indicator);
+                const btnGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                btnGroup.setAttribute("transform", `translate(${{config.nodeWidth - 24}}, ${{config.nodeHeight/2 - 10}})`);
+
+                const btnBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                btnBg.setAttribute("width", 20);
+                btnBg.setAttribute("height", 20);
+                btnBg.setAttribute("rx", 4);
+                btnBg.setAttribute("fill", node.expanded ? "#F3F4F6" : "#1B5E3F");
+                btnGroup.appendChild(btnBg);
+
+                const btnText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                btnText.setAttribute("class", "expand-icon");
+                btnText.setAttribute("x", 10);
+                btnText.setAttribute("y", 14);
+                btnText.setAttribute("text-anchor", "middle");
+                btnText.setAttribute("fill", node.expanded ? "#6B7280" : "#FFFFFF");
+                btnText.textContent = node.expanded ? "−" : "+";
+                btnGroup.appendChild(btnText);
+
+                nodeGroup.appendChild(btnGroup);
             }}
 
             g.appendChild(nodeGroup);
         }});
     }}
 
-    // Initialize
     root = processNode(data, 0);
     render();
 }})();
@@ -490,7 +762,7 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.header("Settings")
+        st.markdown("### Settings")
 
         selected_metric = st.selectbox(
             "Metric",
@@ -502,42 +774,62 @@ def main():
 
         st.markdown("---")
 
-        st.markdown("### Dimension Order")
+        st.markdown("### Dimensions")
         selected_dims = st.multiselect(
-            "Select and order dimensions",
+            "Select hierarchy levels",
             options=DATA_CONFIG["dimensions"],
             default=st.session_state.selected_dimensions,
-            help="Order determines hierarchy depth"
+            help="Order determines drill-down hierarchy"
         )
 
         if selected_dims:
             st.session_state.selected_dimensions = selected_dims
 
         st.markdown("---")
-        st.markdown("### How to Use")
+
+        # Info box with custom styling
         st.markdown("""
-        - **Click** nodes with **+** to expand
-        - **Click** nodes with **−** to collapse
-        - **Hover** for detailed tooltips
-        - Blue filled = has children
-        - White filled = expanded or leaf
-        """)
+        <div class="info-box">
+            <h4>How to Use</h4>
+            <p>• Click <strong>+</strong> to expand a node</p>
+            <p>• Click <strong>−</strong> to collapse</p>
+            <p>• Hover for detailed tooltips</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### Performance Legend")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("🟢 High")
-            st.markdown("🟡 Medium")
-        with col2:
-            st.markdown("🟠 Low")
-            st.markdown("🔵 Root")
 
-    # Header
-    st.title("Decomposition Tree")
-    st.caption("Interactive drill-down analysis - Click nodes to expand/collapse")
+        # Legend with custom styling
+        st.markdown("""
+        <div class="info-box">
+            <h4>Performance Legend</h4>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #1B5E3F;"></div>
+                <span>High Performance</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #2D8B5E;"></div>
+                <span>Good Performance</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #F59E0B;"></div>
+                <span>Needs Attention</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #DC2626;"></div>
+                <span>Low Performance</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Build and display tree
+    # Main content
+    st.title("Revenue Tree")
+    st.markdown('<p class="subtitle">Revenue analysis and growth tracking with intelligent insights.</p>', unsafe_allow_html=True)
+
+    # Category badge
+    st.markdown('<span class="category-badge">Financial</span>', unsafe_allow_html=True)
+
+    # Tree visualization
     if st.session_state.selected_dimensions:
         tree_data = build_hierarchy(
             df,
@@ -546,25 +838,26 @@ def main():
         )
 
         html_content = create_tree_visualization(tree_data, selected_metric)
-        components.html(html_content, height=700, scrolling=True)
+        components.html(html_content, height=650, scrolling=True)
 
-        # Summary
+        # Summary metrics
         st.markdown("---")
-        col1, col2, col3, col4 = st.columns(4)
 
         total_value = calculate_metric(df, selected_metric)
         display_value = f"{total_value:.1f}%" if selected_metric == "OTP" else f"{total_value:,}"
+
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.metric("Total Value", display_value)
         with col2:
             st.metric("Records", f"{len(df):,}")
         with col3:
-            st.metric("Dimensions", len(st.session_state.selected_dimensions))
+            st.metric("Hierarchy Levels", len(st.session_state.selected_dimensions))
         with col4:
-            st.metric("Metric", selected_metric)
+            st.metric("Current Metric", selected_metric)
     else:
-        st.warning("Please select at least one dimension.")
+        st.warning("Please select at least one dimension in the sidebar.")
 
 
 if __name__ == "__main__":
