@@ -10,6 +10,7 @@ import pandas as pd
 import json
 from typing import Dict, List
 from snowflake.snowpark.context import get_active_session
+from snowflake.cortex import Complete
 
 st.set_page_config(
     page_title="NCC Decomposition Tree",
@@ -169,6 +170,73 @@ st.markdown("""
         font-size: 0.75rem;
         margin-top: -0.5rem;
     }
+
+    /* AI Insights Panel */
+    .ai-insights-panel {
+        background: linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 100%);
+        border: 1px solid #86EFAC;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin: 1rem 0;
+    }
+
+    .ai-insights-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .ai-insights-header h4 {
+        color: #1B5E3F;
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .ai-badge {
+        background-color: #1B5E3F;
+        color: white;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .ai-insights-content {
+        color: #374151;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .ai-insights-content p {
+        margin: 0.5rem 0;
+    }
+
+    .ai-loading {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #6B7280;
+        font-size: 0.9rem;
+    }
+
+    .node-selector-container {
+        background-color: #F9FAFB;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .node-selector-container h4 {
+        color: #1B5E3F;
+        font-size: 0.9rem;
+        font-weight: 600;
+        margin-bottom: 0.75rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -179,6 +247,58 @@ def load_data() -> pd.DataFrame:
     session = get_active_session()
     df = session.table("MY_WORKFLOW_DB.PUBLIC.NCC_TEST").to_pandas()
     return df
+
+
+def generate_ai_summary(node_data: Dict, filtered_df: pd.DataFrame, metric_label: str) -> str:
+    """Generate AI summary for selected node using Snowflake Cortex"""
+
+    # Build context about the node
+    node_name = node_data.get('name', 'Unknown')
+    dimension = node_data.get('dimension', 'Unknown')
+    value = node_data.get('value', 0)
+    record_count = node_data.get('count', 0)
+
+    # Get comparison data if we have children
+    children_summary = ""
+    if 'children' in node_data and node_data['children']:
+        top_children = node_data['children'][:5]
+        children_summary = "Top segments: " + ", ".join([
+            f"{c['name']} (${c['value']/1e6:.1f}M)" for c in top_children
+        ])
+
+    # Calculate YoY if available
+    yoy_info = ""
+    if len(filtered_df) > 0:
+        total_ncc = filtered_df['NCC'].sum()
+        total_py = filtered_df['NCC_PY'].sum()
+        if total_py > 0:
+            yoy = ((total_ncc - total_py) / total_py) * 100
+            yoy_info = f"Year-over-year growth: {yoy:+.1f}%"
+
+    prompt = f"""You are a financial analyst assistant. Provide a brief, insightful summary (3-4 sentences) about this NCC (Net Client Contribution) data segment.
+
+Segment: {node_name}
+Dimension: {dimension}
+Metric: {metric_label}
+Value: ${value/1e6:.2f}M
+Records: {record_count:,}
+{yoy_info}
+{children_summary}
+
+Focus on:
+1. Performance assessment (is this strong/weak?)
+2. One actionable insight or area to investigate
+3. Keep it concise and business-focused"""
+
+    try:
+        response = Complete(
+            model="mistral-large2",
+            prompt=prompt,
+            session=get_active_session()
+        )
+        return response
+    except Exception as e:
+        return f"Unable to generate AI insights: {str(e)}"
 
 
 def calculate_metric(df: pd.DataFrame, metric: str) -> float:
@@ -693,6 +813,28 @@ if 'selected_dimensions' not in st.session_state:
     st.session_state.selected_dimensions = DATA_CONFIG["dimensions"].copy()
 if 'data_scenario' not in st.session_state:
     st.session_state.data_scenario = 'Actuals'
+if 'selected_node' not in st.session_state:
+    st.session_state.selected_node = None
+if 'ai_insights' not in st.session_state:
+    st.session_state.ai_insights = None
+
+
+def flatten_tree_for_selector(node: Dict, path: str = "") -> List[Dict]:
+    """Flatten tree structure into a list for the selector dropdown"""
+    results = []
+    current_path = f"{path} > {node['name']}" if path else node['name']
+
+    results.append({
+        'label': f"{node['dimension']}: {node['name']}",
+        'path': current_path,
+        'data': node
+    })
+
+    if 'children' in node and node['children']:
+        for child in node['children']:
+            results.extend(flatten_tree_for_selector(child, current_path))
+
+    return results
 
 
 def main():
@@ -746,6 +888,7 @@ def main():
             <p>Click <strong>+</strong> to expand a node</p>
             <p>Click <strong>-</strong> to collapse</p>
             <p>Hover for detailed tooltips</p>
+            <p>Use <strong>AI Insights</strong> panel for analysis</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -802,7 +945,74 @@ def main():
     # Tree visualization
     if st.session_state.selected_dimensions and len(filtered_df) > 0:
         tree_data = build_hierarchy(filtered_df, st.session_state.selected_dimensions, selected_metric)
-        components.html(create_tree_visualization(tree_data, selected_metric), height=700, scrolling=True)
+
+        # Create two columns: tree and AI insights
+        tree_col, insights_col = st.columns([2, 1])
+
+        with tree_col:
+            components.html(create_tree_visualization(tree_data, selected_metric), height=650, scrolling=True)
+
+        with insights_col:
+            # Node selector for AI insights
+            st.markdown("""
+            <div class="node-selector-container">
+                <h4>AI Insights</h4>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Flatten tree for selector
+            node_options = flatten_tree_for_selector(tree_data)
+            node_labels = [opt['label'] for opt in node_options]
+
+            selected_label = st.selectbox(
+                "Select a segment to analyze",
+                options=node_labels,
+                index=0,
+                help="Choose a node from the tree to get AI-powered insights"
+            )
+
+            # Find the selected node data
+            selected_node_data = next(
+                (opt['data'] for opt in node_options if opt['label'] == selected_label),
+                None
+            )
+
+            # Generate insights button
+            if st.button("Generate AI Insights", type="primary", use_container_width=True):
+                if selected_node_data:
+                    with st.spinner("Analyzing with Cortex AI..."):
+                        st.session_state.ai_insights = generate_ai_summary(
+                            selected_node_data,
+                            filtered_df,
+                            DATA_CONFIG["metrics"][selected_metric]["label"]
+                        )
+                        st.session_state.selected_node = selected_label
+
+            # Display AI insights if available
+            if st.session_state.ai_insights and st.session_state.selected_node:
+                st.markdown(f"""
+                <div class="ai-insights-panel">
+                    <div class="ai-insights-header">
+                        <h4>Analysis: {st.session_state.selected_node.split(': ')[-1]}</h4>
+                        <span class="ai-badge">Cortex AI</span>
+                    </div>
+                    <div class="ai-insights-content">
+                        {st.session_state.ai_insights}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Quick stats for selected node
+            if selected_node_data:
+                st.markdown("---")
+                st.markdown("**Selected Segment Stats**")
+                st.metric(
+                    "Value",
+                    f"${selected_node_data['value']/1e6:.2f}M" if selected_node_data['value'] >= 1e6 else f"${selected_node_data['value']:,.0f}"
+                )
+                st.metric("Records", f"{selected_node_data.get('count', 0):,}")
+                if 'children' in selected_node_data and selected_node_data['children']:
+                    st.metric("Sub-segments", len(selected_node_data['children']))
     else:
         st.warning("Please select at least one dimension in the sidebar.")
 
