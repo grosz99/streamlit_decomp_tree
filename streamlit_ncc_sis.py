@@ -12,7 +12,6 @@ import pandas as pd
 import json
 from typing import Dict, List
 from snowflake.snowpark.context import get_active_session
-from snowflake.cortex import Complete
 
 # =============================================================================
 # CONFIGURATION
@@ -150,6 +149,7 @@ def flatten_tree(node: Dict, path: str = "") -> List[Dict]:
 # =============================================================================
 
 def generate_ai_summary(node_data: Dict, filtered_df: pd.DataFrame, metric_label: str) -> str:
+    """Generate AI summary using Snowflake Cortex via SQL"""
     node_name, dimension = node_data.get('name', 'Unknown'), node_data.get('dimension', 'Unknown')
     value, record_count = node_data.get('value', 0), node_data.get('count', 0)
 
@@ -170,7 +170,11 @@ Segment: {node_name} | Dimension: {dimension} | Value: ${value/1e6:.2f}M | Recor
 Focus on: 1) Performance assessment 2) One actionable insight"""
 
     try:
-        return Complete(model=CORTEX_MODEL, prompt=prompt, session=get_active_session())
+        session = get_active_session()
+        # Use SQL-based Cortex call (works in all SiS environments)
+        prompt_escaped = prompt.replace("'", "''")
+        result = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{CORTEX_MODEL}', '{prompt_escaped}') as response").collect()
+        return result[0]['RESPONSE'] if result else "No response generated"
     except Exception as e:
         return f"Unable to generate insights: {str(e)}"
 
